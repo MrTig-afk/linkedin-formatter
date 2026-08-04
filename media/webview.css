@@ -1,0 +1,584 @@
+/*
+ * LinkedIn post card styling.
+ * Faithful to LinkedIn's feed anatomy; four palettes swap the ambience via
+ * the custom properties below (body.theme-*). No CDN fonts, no external
+ * resources -- zero egress.
+ * Post width (555px) is an approximate match for LinkedIn's desktop feed post
+ * text column -- a planning target, not an exact measurement. See T24.
+ */
+
+:root {
+  /* Daylight (default): LinkedIn's light spec. */
+  --canvas: var(--vscode-editor-background, #f4f2ee);
+  --card: #ffffff;
+  --ink: rgba(0, 0, 0, 0.9);
+  --ink-2: rgba(0, 0, 0, 0.6);
+  --ink-3: #999999;
+  --line: rgba(140, 140, 140, 0.25);
+  --hover: rgba(0, 0, 0, 0.06);
+  --active: rgba(0, 0, 0, 0.12);
+  --accent: #0a66c2;
+  --accent-soft: rgba(10, 102, 194, 0.14);
+  --accent-ring: rgba(10, 102, 194, 0.45);
+  --selection: rgba(10, 102, 194, 0.25);
+  --avatar-bg: #e2ddd6;
+  --avatar-fg: #a9a49c;
+}
+
+/* Midnight: LinkedIn's dark mode, verbatim hues. */
+body.theme-midnight {
+  --canvas: #000000;
+  --card: #1b1f23;
+  --ink: rgba(255, 255, 255, 0.9);
+  --ink-2: rgba(255, 255, 255, 0.6);
+  --ink-3: rgba(255, 255, 255, 0.4);
+  --line: rgba(255, 255, 255, 0.14);
+  --hover: rgba(255, 255, 255, 0.08);
+  --active: rgba(255, 255, 255, 0.14);
+  --accent: #70b5f9;
+  --accent-soft: rgba(112, 181, 249, 0.18);
+  --accent-ring: rgba(112, 181, 249, 0.5);
+  --selection: rgba(112, 181, 249, 0.3);
+  --avatar-bg: #38434f;
+  --avatar-fg: #90a0ad;
+}
+
+/* Dim: slate-blue dusk tuned to sit beside dark editor themes. */
+body.theme-dim {
+  --canvas: #1d2429;
+  --card: #262f36;
+  --ink: #e8edf1;
+  --ink-2: #9fb0bc;
+  --ink-3: #6d7d89;
+  --line: rgba(159, 176, 188, 0.16);
+  --hover: rgba(159, 176, 188, 0.1);
+  --active: rgba(159, 176, 188, 0.18);
+  --accent: #5ba3f5;
+  --accent-soft: rgba(91, 163, 245, 0.16);
+  --accent-ring: rgba(91, 163, 245, 0.5);
+  --selection: rgba(91, 163, 245, 0.3);
+  --avatar-bg: #33404a;
+  --avatar-fg: #8296a4;
+}
+
+/* Editor: inherit the user's active VS Code theme. */
+body.theme-editor {
+  --canvas: var(--vscode-editor-background, #1e1e1e);
+  --card: var(--vscode-editorWidget-background, #252526);
+  --ink: var(--vscode-editor-foreground, #d4d4d4);
+  --ink-2: var(--vscode-descriptionForeground, #9d9d9d);
+  --ink-3: var(--vscode-disabledForeground, #6e6e6e);
+  --line: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+  --hover: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+  --active: var(--vscode-toolbar-activeBackground, rgba(128, 128, 128, 0.25));
+  --accent: var(--vscode-focusBorder, #007fd4);
+  --accent-soft: rgba(0, 127, 212, 0.18);
+  --accent-ring: var(--vscode-focusBorder, rgba(0, 127, 212, 0.5));
+  --selection: var(--vscode-editor-selectionBackground, rgba(0, 127, 212, 0.3));
+  --avatar-bg: var(--vscode-badge-background, #4d4d4d);
+  --avatar-fg: var(--vscode-badge-foreground, #cccccc);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  /* The symbol/emoji tail gives glyphs to enclosed alphanumerics
+     (circled, squared, parenthesized) that text faces lack. */
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif,
+    "Segoe UI Symbol", "Segoe UI Emoji", "Noto Sans Symbols 2", "Noto Color Emoji";
+  background: var(--canvas);
+  /* Column stack: toolbar on top, card filling the pane below, counter
+     last. A row here lays the toolbar out BESIDE the card. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 16px 16px;
+}
+
+.linkedin-card {
+  background: var(--card);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--line);
+  max-width: 555px;
+  width: 100%;
+  color: var(--ink);
+}
+
+/* --- Post header: avatar, name block, ellipsis menu --- */
+
+.post-header {
+  display: flex;
+  align-items: flex-start;
+  padding: 12px 16px 0;
+}
+
+/* Default-profile silhouette, drawn in pure CSS (no images allowed). */
+.avatar {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--avatar-bg);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.avatar::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--avatar-fg);
+}
+
+.avatar::after {
+  content: '';
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 24px;
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  background: var(--avatar-fg);
+}
+
+/* Initials variant: real identity available, no silhouette. */
+.avatar.avatar-initials {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--avatar-fg);
+  letter-spacing: 0.5px;
+  user-select: none;
+}
+
+.avatar.avatar-initials::before,
+.avatar.avatar-initials::after {
+  content: none;
+}
+
+.post-meta {
+  margin-left: 8px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.meta-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+  line-height: 1.33;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-degree {
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.meta-headline {
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.33;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-time {
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.33;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.meta-time svg {
+  display: inline-block;
+  vertical-align: text-bottom;
+}
+
+.post-ellipsis {
+  color: var(--ink-2);
+  padding: 4px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* --- Post body --- */
+
+.post-body {
+  padding: 8px 16px 12px;
+  font-size: 14px;
+  line-height: 1.43;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.post-body ::selection {
+  background: var(--selection);
+}
+
+/* --- Social proof strip: reaction cluster + counts --- */
+
+.post-social {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 16px 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-2);
+  user-select: none;
+}
+
+.reaction-cluster {
+  display: inline-flex;
+  align-items: center;
+}
+
+.reaction {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--card);
+  flex-shrink: 0;
+}
+
+.reaction + .reaction {
+  margin-left: -5px;
+}
+
+/* LinkedIn reaction brand colors: fixed across every palette. */
+.rx-like   { background: #378fe9; z-index: 3; }
+.rx-praise { background: #6dae4f; z-index: 2; }
+.rx-love   { background: #df704d; z-index: 1; }
+
+.social-count-right {
+  margin-left: auto;
+}
+
+/* --- Action bar: Like / Comment / Repost / Send --- */
+
+.post-actions {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  padding: 4px 8px;
+  user-select: none;
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: default;
+}
+
+.action:hover {
+  background: var(--hover);
+}
+
+/* --- Toolbar: one horizontal strip above the card, styled as composer
+   chrome. Never wraps into a grid; overflows horizontally instead. --- */
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--card);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--line);
+  max-width: 555px;
+  width: 100%;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  margin: 0 auto 12px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.family-select {
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+  max-width: 150px;
+}
+
+.family-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.toolbar-separator {
+  width: 1px;
+  height: 22px;
+  background: var(--line);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.axis-btn,
+.mark-btn,
+.clear-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: 4px;
+  min-width: 30px;
+  height: 30px;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.axis-btn:hover:not(:disabled),
+.mark-btn:hover,
+.clear-btn:hover {
+  background: var(--hover);
+}
+
+.axis-btn:active:not(:disabled),
+.mark-btn:active,
+.clear-btn:active {
+  background: var(--active);
+}
+
+/* Pressed state: the selection uniformly carries this axis. */
+.axis-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-ring);
+}
+
+.axis-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Mark buttons: the decoration IS the icon. */
+.mark-btn[data-style-id="strikethrough"] {
+  text-decoration: line-through;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.mark-btn[data-style-id="underline"] {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* Clear formatting: a struck T with a small trailing x. */
+.clear-btn {
+  gap: 1px;
+}
+
+.clear-face {
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: line-through;
+}
+
+.clear-sub {
+  font-size: 10px;
+  font-weight: 600;
+  align-self: flex-end;
+  line-height: 1.6;
+}
+
+/* Caret mirror: where the left editor's cursor sits, i.e. where typed
+   text and emoji will be inserted. */
+.caret-marker {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin: 0 -1px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  user-select: none;
+}
+
+/* --- Character counter --- */
+
+.char-counter {
+  max-width: 555px;
+  width: 100%;
+  margin: 8px auto 0;
+  padding: 4px 16px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, #666);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.counter-warning {
+  color: #b35c00;
+  font-weight: 600;
+}
+
+.counter-over {
+  color: #d32f2f;
+  font-weight: 600;
+}
+
+/* --- Truncation markers --- */
+
+.truncation-marker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.truncation-marker::before,
+.truncation-marker::after {
+  content: '';
+  flex: 1;
+  border-top: 1px dashed var(--ink-3);
+}
+
+.truncation-label {
+  font-size: 10px;
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+/* --- Emoji picker --- */
+
+.emoji-btn {
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  min-width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-size: 17px;
+  color: var(--ink-2);
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.emoji-btn:hover {
+  background: var(--hover);
+}
+
+.emoji-btn:active {
+  background: var(--active);
+}
+
+.emoji-picker {
+  max-width: 555px;
+  width: 100%;
+  margin: 0 auto 12px;
+  background: var(--card);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--line), 0 4px 12px rgba(0, 0, 0, 0.15);
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+.emoji-picker[hidden] {
+  display: none;
+}
+
+.emoji-search-wrap {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.emoji-search {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+}
+
+.emoji-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.emoji-groups {
+  overflow-y: auto;
+  padding: 8px;
+  flex: 1;
+}
+
+.emoji-group-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+  padding: 4px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.emoji-item {
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.emoji-item:hover {
+  background: var(--hover);
+}

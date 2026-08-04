@@ -1,0 +1,168 @@
+{
+  "name": "linkedin-formatter",
+  "displayName": "LinkedIn Formatter",
+  "publisher": "kaushiknaru",
+  "description": "Format LinkedIn posts with Unicode styles from a live preview beside your editor.",
+  "version": "1.0.1",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Formatters"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": ["onLanguage:linkedin", "onWebviewPanel:linkedinFormatter.preview"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "linkedin",
+        "extensions": [".linkedin"],
+        "aliases": ["LinkedIn Post"]
+      }
+    ],
+    "commands": [
+      {
+        "command": "linkedinFormatter.openPreview",
+        "title": "LinkedIn: Open Preview"
+      },
+      {
+        "command": "linkedinFormatter.copyFormattedPost",
+        "title": "LinkedIn: Copy Formatted Post"
+      },
+      {
+        "command": "linkedinFormatter.clearFormatting",
+        "title": "LinkedIn: Clear Formatting"
+      },
+      {
+        "command": "linkedinFormatter.toggleBold",
+        "title": "LinkedIn: Toggle Bold"
+      },
+      {
+        "command": "linkedinFormatter.toggleItalic",
+        "title": "LinkedIn: Toggle Italic"
+      },
+      {
+        "command": "linkedinFormatter.toggleBoldItalic",
+        "title": "LinkedIn: Toggle Bold Italic"
+      },
+      {
+        "command": "linkedinFormatter.toggleStrikethrough",
+        "title": "LinkedIn: Toggle Strikethrough"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "linkedinFormatter.toggleBold",
+        "key": "ctrl+b",
+        "mac": "cmd+b",
+        "when": "editorTextFocus && editorLangId == 'linkedin'"
+      },
+      {
+        "command": "linkedinFormatter.toggleItalic",
+        "key": "ctrl+i",
+        "mac": "cmd+i",
+        "when": "editorTextFocus && editorLangId == 'linkedin'"
+      },
+      {
+        "command": "linkedinFormatter.toggleBoldItalic",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b",
+        "when": "editorTextFocus && editorLangId == 'linkedin'"
+      },
+      {
+        "command": "linkedinFormatter.toggleStrikethrough",
+        "key": "alt+shift+5",
+        "mac": "alt+shift+5",
+        "when": "editorTextFocus && editorLangId == 'linkedin'"
+      }
+    ],
+    "configuration": {
+      "title": "LinkedIn Formatter",
+      "properties": {
+        "linkedinFormatter.countingUnit": {
+          "type": "string",
+          "enum": ["codepoints", "utf16"],
+          "default": "utf16",
+          "description": "How to count characters for the 3,000-character limit. LinkedIn counts UTF-16 code units (verified empirically: styled characters count as 2), so 'utf16' matches the composer. 'codepoints' counts visible-ish Unicode code points instead."
+        },
+        "linkedinFormatter.warnAtPercent": {
+          "type": "number",
+          "default": 90,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Show a warning on the character counter when this percentage of the 3,000 limit is reached."
+        },
+        "linkedinFormatter.showTruncationMarkers": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show approximate 'see more' cutoff markers at 140 (mobile) and 210 (desktop) characters in the preview. Off by default."
+        },
+        "linkedinFormatter.autoOpenPreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open the LinkedIn preview beside the editor when a .linkedin file becomes active."
+        },
+        "linkedinFormatter.cardTheme": {
+          "type": "string",
+          "enum": ["daylight", "midnight", "dim", "editor"],
+          "default": "editor",
+          "enumDescriptions": [
+            "LinkedIn's classic light look.",
+            "LinkedIn's dark mode: near-black card on a black canvas.",
+            "A soft slate-blue dusk tuned to sit beside dark editor themes.",
+            "Inherit the colors of your active VS Code theme."
+          ],
+          "description": "Color palette for the preview card."
+        },
+        "linkedinFormatter.profileName": {
+          "type": "string",
+          "default": "",
+          "description": "Name shown on the preview card. Empty: use the name from your git config, falling back to a placeholder."
+        },
+        "linkedinFormatter.profileHeadline": {
+          "type": "string",
+          "default": "",
+          "description": "Headline shown under the name on the preview card. Empty: use the email from your git config, falling back to a placeholder."
+        },
+        "linkedinFormatter.defaultFamily": {
+          "type": "string",
+          "enum": ["serif", "sans-serif", "script", "fraktur", "monospace", "double-struck", "circled", "squared", "negative-squared", "fullwidth", "parenthesized"],
+          "default": "serif",
+          "description": "Font family the bold/italic keyboard shortcuts act in when no preview panel is open. With a preview open, its family dropdown wins."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[linkedin]": {
+        "editor.unicodeHighlight.ambiguousCharacters": false,
+        "editor.unicodeHighlight.invisibleCharacters": false,
+        "editor.unicodeHighlight.nonBasicASCII": false
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\" && tsc -p ./",
+    "build": "node esbuild.js",
+    "lint": "eslint src test",
+    "test:unit": "npm run compile && node --test \"out/test/unit/**/*.test.js\"",
+    "test:integration": "npm run compile && npm run build && vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.96.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "esbuild": "^0.24.2",
+    "eslint": "^9.18.0",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.20.0"
+  }
+}

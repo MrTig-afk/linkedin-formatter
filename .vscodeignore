@@ -1,0 +1,25 @@
+.vscode/**
+.vscode-test/**
+.vscode-test.mjs
+.claude/**
+.pipeline/**
+src/**
+out/**
+test/**
+docs/**
+node_modules/**
+**/*.ts
+**/*.map
+**/tsconfig.json
+**/eslint.config.*
+esbuild.js
+.gitignore
+.env*
+CLAUDE.md
+START-HERE.md
+RUNBOOK.md
+venv/**
+*.linkedin
+
+# the github-facing readme; the listing uses README.marketplace.md via --readme-path
+README.md

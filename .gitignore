@@ -1,0 +1,41 @@
+# secrets - never gated, never negotiable
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+
+# machine junk
+node_modules/
+dist/
+out/
+*.vsix
+*.map
+__pycache__/
+venv/
+.venv/
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+.vscode-test/
+
+# local-only working material - internal tooling, never published
+CLAUDE.md
+START-HERE.md
+RUNBOOK.md
+.claude/
+.pipeline/
+assets/
+social-media/
+project_summary.txt
+docs/
+*.tex
+
+# user post drafts - never committed
+*.linkedin
+
+# packaged into the vsix from disk for the marketplace version history; not tracked
+CHANGELOG.md

@@ -1,0 +1,486 @@
+import * as vscode from 'vscode';
+import * as fs from 'node:fs';
+import { buildOffsetSpans, type TruncationMarker } from '../lib/spanBuilder';
+import { buildPreviewHtml, getNonce, buildCounterHtml, type AxisState } from './html';
+import { validateMessage } from '../lib/validateMessage';
+import type { WebviewMessage } from '../lib/messageContract';
+import { toggleStyle, clearAllFormatting, snapToCodePointBoundary } from '../lib/toggleStyle';
+import { convertFamily, toggleAxis, summarizeSelection, effectiveFamily, FAMILY_IDS, FAMILY_MATRIX, type FamilyId } from '../lib/family';
+import { countCharacters, getCounterState, LINKEDIN_POST_LIMIT, type CountingUnit } from '../lib/charCount';
+import { parseGitConfig, initialsOf, type GitIdentity } from '../lib/identity';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+export class PreviewPanel {
+  public static readonly viewType = 'linkedinFormatter.preview';
+
+  private static currentPanel: PreviewPanel | undefined;
+
+  /**
+   * Set when the user closes the panel; auto-open respects it for the rest
+   * of the session so a deliberately closed preview does not keep coming
+   * back. An explicit LinkedIn: Open Preview clears it.
+   */
+  public static suppressedThisSession = false;
+
+  public static get current(): PreviewPanel | undefined {
+    return PreviewPanel.currentPanel;
+  }
+
+  public get trackedUri(): string {
+    return this._trackedUri;
+  }
+
+  private readonly _panel: vscode.WebviewPanel;
+  private readonly _cssText: string;
+  private readonly _scriptText: string;
+  private _trackedUri: string;
+  private _activeFamily: FamilyId;
+  /**
+   * The selection to keep highlighted in the card. Persistent, not
+   * one-shot: the caret-mirror re-render that follows every toolbar edit
+   * used to wipe a one-shot restore, collapsing the selection after a
+   * single edit. Cleared when the document changes underneath us (typing,
+   * undo) or the user collapses the selection in the card.
+   */
+  private _restoreSelection: { start: number; end: number } | null = null;
+  /** Document changes caused by our own applyEdit; they keep the restore. */
+  private _selfEditsInFlight = 0;
+  private _lastCaretOffset: number | null = null;
+  /** Toolbar state (family|bold|italic) as of the last render. */
+  private _lastToolbarKey = '';
+  /** ~/.gitconfig identity, read once per panel; nulls when unavailable. */
+  private readonly _gitIdentity: GitIdentity;
+  private _disposables: vscode.Disposable[] = [];
+
+  /** The family Ctrl+B/Ctrl+I act in while this panel is open. */
+  public get activeFamily(): FamilyId {
+    return this._activeFamily;
+  }
+
+  public static createOrShow(
+    context: vscode.ExtensionContext,
+    editor: vscode.TextEditor
+  ): void {
+    if (PreviewPanel.currentPanel) {
+      // Reveal in place; passing a column here could drag the panel around.
+      PreviewPanel.currentPanel._panel.reveal(undefined, true);
+      PreviewPanel.currentPanel._trackedUri = editor.document.uri.toString();
+      PreviewPanel.currentPanel.update(editor.document);
+      return;
+    }
+
+    // Open in the column NEXT TO THE EDITOR, not Beside-the-active-group:
+    // after a window restore the active group can be an empty husk left by
+    // the unrestorable webview, and Beside would then spawn a third group.
+    // Targeting editor.viewColumn + 1 reuses that husk instead.
+    const targetColumn = editor.viewColumn !== undefined
+      ? editor.viewColumn + 1
+      : vscode.ViewColumn.Beside;
+
+    const panel = vscode.window.createWebviewPanel(
+      PreviewPanel.viewType,
+      'LinkedIn Preview',
+      { viewColumn: targetColumn, preserveFocus: true },
+      {
+        enableScripts: true,
+        localResourceRoots: [
+          vscode.Uri.joinPath(context.extensionUri, 'media'),
+        ],
+      }
+    );
+
+    const { cssText, scriptText } = PreviewPanel.readWebviewSources(context);
+    PreviewPanel.currentPanel = new PreviewPanel(
+      panel,
+      cssText,
+      scriptText,
+      editor.document.uri.toString()
+    );
+    PreviewPanel.currentPanel.update(editor.document);
+  }
+
+  /**
+   * Revive a preview persisted in the window layout (S5.3). Without this,
+   * every window restore leaves a dead empty editor group where the
+   * preview used to live.
+   */
+  public static revive(
+    panel: vscode.WebviewPanel,
+    context: vscode.ExtensionContext,
+    state: unknown,
+  ): void {
+    if (PreviewPanel.currentPanel) {
+      // Auto-open already created a live preview; drop the revived shell.
+      panel.dispose();
+      return;
+    }
+    const stateUri = (typeof state === 'object' && state !== null &&
+      typeof (state as Record<string, unknown>)['uri'] === 'string')
+      ? (state as Record<string, string>)['uri']
+      : undefined;
+    const uri = stateUri ?? vscode.window.visibleTextEditors.find(
+      (e) => e.document.languageId === 'linkedin'
+    )?.document.uri.toString();
+    if (!uri) {
+      panel.dispose();
+      return;
+    }
+    const { cssText, scriptText } = PreviewPanel.readWebviewSources(context);
+    PreviewPanel.currentPanel = new PreviewPanel(panel, cssText, scriptText, uri);
+    const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === uri);
+    if (doc) {
+      PreviewPanel.currentPanel.update(doc);
+    } else {
+      vscode.workspace.openTextDocument(vscode.Uri.parse(uri)).then(
+        (d) => PreviewPanel.currentPanel?.update(d),
+        () => PreviewPanel.currentPanel?.dispose(),
+      );
+    }
+  }
+
+  /**
+   * Read the stylesheet and script ONCE per panel and inline them into
+   * every render: a vscode-resource fetch can fail or lag during rapid
+   * re-renders, leaving the pane unstyled (white boxes on dark).
+   */
+  private static readWebviewSources(
+    context: vscode.ExtensionContext,
+  ): { cssText: string; scriptText: string } {
+    return {
+      cssText: fs.readFileSync(
+        vscode.Uri.joinPath(context.extensionUri, 'media', 'webview.css').fsPath, 'utf-8'),
+      scriptText: fs.readFileSync(
+        vscode.Uri.joinPath(context.extensionUri, 'media', 'toolbar.js').fsPath, 'utf-8'),
+    };
+  }
+
+  private constructor(
+    panel: vscode.WebviewPanel,
+    cssText: string,
+    scriptText: string,
+    documentUri: string
+  ) {
+    this._panel = panel;
+    this._cssText = cssText;
+    this._scriptText = scriptText;
+    this._trackedUri = documentUri;
+    let gitIdentity: GitIdentity = { name: null, email: null };
+    try {
+      gitIdentity = parseGitConfig(
+        fs.readFileSync(path.join(os.homedir(), '.gitconfig'), 'utf-8'));
+    } catch { /* no gitconfig: placeholders stay */ }
+    this._gitIdentity = gitIdentity;
+
+    const configured = vscode.workspace.getConfiguration('linkedinFormatter')
+      .get<string>('defaultFamily', 'serif');
+    this._activeFamily = (FAMILY_IDS as readonly string[]).includes(configured)
+      ? configured as FamilyId
+      : 'serif';
+    this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
+
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.document.uri.toString() !== this._trackedUri) { return; }
+      // Metadata-only events (save, dirty-state, EOL) carry no content
+      // changes. Auto-save fires one about a second after every edit;
+      // treating it as typing wiped the restored selection and re-rendered
+      // for nothing.
+      if (event.contentChanges.length === 0) { return; }
+      if (this._selfEditsInFlight > 0) {
+        this._selfEditsInFlight--;
+      } else {
+        // External change (typing, undo): the stored offsets are stale.
+        this._restoreSelection = null;
+      }
+      this.update(event.document);
+    }, null, this._disposables);
+
+    // Mirror the left editor's caret into the card so the insertion point
+    // (typing, emoji) is visible. Re-render only when the caret moved.
+    vscode.window.onDidChangeTextEditorSelection((event) => {
+      if (event.textEditor.document.uri.toString() !== this._trackedUri) { return; }
+      const offset = event.textEditor.document.offsetAt(event.selections[0].active);
+      if (offset === this._lastCaretOffset) { return; }
+      this.update(event.textEditor.document);
+    }, null, this._disposables);
+
+    this._panel.webview.onDidReceiveMessage((raw: unknown) => {
+      const doc = vscode.workspace.textDocuments.find(
+        d => d.uri.toString() === this._trackedUri
+      );
+      if (!doc) { return; }
+      const result = validateMessage(raw, doc.getText().length);
+      if (!result.valid) {
+        console.warn('[LinkedIn Preview] Rejected webview message:', result.reason);
+        return;
+      }
+      this.handleValidMessage(result.message, doc);
+    }, null, this._disposables);
+  }
+
+  private handleValidMessage(message: WebviewMessage, doc: vscode.TextDocument): void {
+    if (message.type === 'applyStyle') {
+      this.applyEdit(doc, message.start, message.end, (text) =>
+        toggleStyle(text, message.styleId),
+      );
+      return;
+    }
+
+    if (message.type === 'clearFormatting') {
+      this.applyEdit(doc, message.start, message.end, clearAllFormatting);
+      return;
+    }
+
+    if (message.type === 'setFamily') {
+      this._activeFamily = message.family;
+      return;
+    }
+
+    if (message.type === 'convertFamily') {
+      this._activeFamily = message.family;
+      this.applyEdit(doc, message.start, message.end, (text) =>
+        convertFamily(text, message.family),
+      );
+      return;
+    }
+
+    if (message.type === 'toggleAxis') {
+      this.applyEdit(doc, message.start, message.end, (text) =>
+        toggleAxis(text, message.axis, effectiveFamily(text, this._activeFamily)),
+      );
+      return;
+    }
+
+    if (message.type === 'undo' || message.type === 'redo') {
+      const command = message.type;
+      // Undo acts on the focused editor, so focus the tracked one first.
+      const editor = vscode.window.visibleTextEditors.find(
+        e => e.document.uri.toString() === this._trackedUri
+      );
+      if (!editor) { return; }
+      vscode.window.showTextDocument(editor.document, {
+        viewColumn: editor.viewColumn,
+        preserveFocus: false,
+      }).then(
+        () => vscode.commands.executeCommand(command),
+        (err) => console.error('[LinkedIn Preview] undo/redo failed:', err),
+      );
+      return;
+    }
+
+    if (message.type === 'selectionState') {
+      // The card's live selection: keep it highlighted across re-renders
+      // and reflect its family/axes in the toolbar. start === end clears.
+      this._restoreSelection = message.start < message.end
+        ? { start: message.start, end: message.end }
+        : null;
+      // Re-render only when the toolbar would actually look different.
+      // The selection itself is already live in the webview; swapping the
+      // HTML for nothing flashes the pane and costs the perceived speed.
+      const { displayFamily, axisState } = this.toolbarStateFor(doc.getText());
+      const key = `${displayFamily}|${JSON.stringify(axisState)}`;
+      if (key !== this._lastToolbarKey) {
+        this.update(doc);
+      }
+      return;
+    }
+
+    if (message.type === 'cursorSync') {
+      this._restoreSelection = null;
+      const editor = vscode.window.visibleTextEditors.find(
+        e => e.document.uri.toString() === this._trackedUri
+      );
+      if (!editor) { return; }
+
+      const pos = editor.document.positionAt(message.offset);
+      editor.selection = new vscode.Selection(pos, pos);
+      editor.revealRange(
+        new vscode.Range(pos, pos),
+        vscode.TextEditorRevealType.InCenterIfOutsideViewport
+      );
+      return;
+    }
+
+    if (message.type === 'insertEmoji') {
+      const editor = vscode.window.visibleTextEditors.find(
+        e => e.document.uri.toString() === this._trackedUri
+      );
+      const position = editor
+        ? editor.selection.active
+        : doc.positionAt(doc.getText().length);
+      const edit = new vscode.WorkspaceEdit();
+      edit.insert(doc.uri, position, message.emoji);
+      vscode.workspace.applyEdit(edit).then(
+        undefined,
+        (err) => console.error('[LinkedIn Preview] insertEmoji failed:', err),
+      );
+      return;
+    }
+  }
+
+  private applyEdit(
+    doc: vscode.TextDocument,
+    rawStart: number,
+    rawEnd: number,
+    transform: (text: string) => string,
+  ): void {
+    const fullText = doc.getText();
+    const start = snapToCodePointBoundary(fullText, rawStart, 'backward');
+    const end = snapToCodePointBoundary(fullText, rawEnd, 'forward');
+    const selectedText = fullText.substring(start, end);
+    if (selectedText.length === 0) { return; }
+
+    const replacement = transform(selectedText);
+    if (replacement === selectedText) { return; }
+
+    const range = new vscode.Range(
+      doc.positionAt(start),
+      doc.positionAt(end),
+    );
+    // Restore the visual selection over the replacement after the
+    // change-event re-render, so toggling does not need a re-drag (S5.4).
+    this._restoreSelection = { start, end: start + replacement.length };
+    this._selfEditsInFlight++;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, range, replacement);
+    vscode.workspace.applyEdit(edit).then(
+      (applied) => {
+        if (!applied) {
+          this._selfEditsInFlight--;
+          this._restoreSelection = null;
+        }
+      },
+      (err) => {
+        this._selfEditsInFlight--;
+        this._restoreSelection = null;
+        console.error('[LinkedIn Preview] applyEdit failed:', err);
+      },
+    );
+  }
+
+  public update(document: vscode.TextDocument): void {
+    const text = document.getText();
+    const nonce = getNonce();
+
+    const trackedEditor = vscode.window.visibleTextEditors.find(
+      e => e.document.uri.toString() === this._trackedUri
+    );
+    const rawCaret = trackedEditor
+      ? document.offsetAt(trackedEditor.selection.active)
+      : null;
+    this._lastCaretOffset = rawCaret;
+    // Mirror the caret only while the editor is actually focused. An
+    // unfocused editor's caret is stale state; re-rendering it while the
+    // user works in the card reads as a ghost cursor stuck mid-word.
+    const editorFocused = vscode.window.activeTextEditor?.document.uri.toString()
+      === this._trackedUri;
+    const caretOffset = editorFocused ? rawCaret : null;
+
+    const config = vscode.workspace.getConfiguration('linkedinFormatter');
+    // Default utf16: LinkedIn's composer counts UTF-16 code units (T20,
+    // verified 2026-07-30 - 3000 astral chars showed -3000 overage).
+    const rawUnit = config.get<string>('countingUnit', 'utf16');
+    const unit: CountingUnit = (rawUnit === 'codepoints') ? 'codepoints' : 'utf16';
+    const warnAtPercent = Math.max(0, Math.min(100,
+      config.get<number>('warnAtPercent', 90)));
+    const warnAt = Math.floor(LINKEDIN_POST_LIMIT * warnAtPercent / 100);
+
+    // Off by default (owner decision 2026-07-30); opt-in via setting.
+    const showMarkers = config.get<boolean>('showTruncationMarkers', false);
+    const markers: TruncationMarker[] = showMarkers
+      ? [
+          { position: 140, label: '~140 chars — mobile cutoff' },
+          { position: 210, label: '~210 chars — desktop cutoff' },
+        ]
+      : [];
+    const body = buildOffsetSpans(text, markers);
+
+    const count = countCharacters(text, unit);
+    const state = getCounterState(count, LINKEDIN_POST_LIMIT, warnAt);
+    const counterHtml = buildCounterHtml(count, state, LINKEDIN_POST_LIMIT);
+
+    // Selection-aware toolbar: the dropdown shows the selection's family
+    // (when uniform) and the axis buttons show pressed state, so what is
+    // highlighted always matches what a click would toggle.
+    const { displayFamily, axisState } = this.toolbarStateFor(text);
+    this._lastToolbarKey = `${displayFamily}|${JSON.stringify(axisState)}`;
+
+    // Identity: explicit settings win, then the git identity that signs
+    // this machine's commits, then neutral placeholders.
+    const rawTheme = config.get<string>('cardTheme', 'editor');
+    const theme = (['daylight', 'midnight', 'dim', 'editor'] as const)
+      .find(t => t === rawTheme) ?? 'daylight';
+    const profileName = config.get<string>('profileName', '').trim()
+      || this._gitIdentity.name || 'Your Name';
+    const profileHeadline = config.get<string>('profileHeadline', '').trim()
+      || this._gitIdentity.email || 'Your headline';
+    const initials = profileName !== 'Your Name' ? initialsOf(profileName) : null;
+
+    this._panel.webview.html = buildPreviewHtml(
+      this._panel.webview.cspSource,
+      nonce,
+      body,
+      counterHtml,
+      this._cssText,
+      this._scriptText,
+      displayFamily,
+      this._restoreSelection,
+      this._trackedUri,
+      // While a selection is highlighted the caret marker only reads as a
+      // stray cursor inside it; the selection IS the insertion target.
+      this._restoreSelection ? null : caretOffset,
+      axisState,
+      { theme, profileName, profileHeadline, initials },
+    );
+  }
+
+  private toolbarStateFor(text: string): {
+    displayFamily: FamilyId;
+    axisState: AxisState | null;
+  } {
+    if (this._restoreSelection && this._restoreSelection.end > text.length) {
+      this._restoreSelection = null;
+    }
+    const selectionText = this._restoreSelection
+      ? text.substring(
+          snapToCodePointBoundary(text, this._restoreSelection.start, 'backward'),
+          snapToCodePointBoundary(text, this._restoreSelection.end, 'forward'),
+        )
+      : '';
+    const summary = selectionText.length > 0 ? summarizeSelection(selectionText) : null;
+    if (!summary) {
+      return { displayFamily: this._activeFamily, axisState: null };
+    }
+    if (summary.family === null) {
+      // Mixed families: a toggle still works per character (each keeps its
+      // own family, unsupported ones no-op), so nothing is disabled.
+      return {
+        displayFamily: this._activeFamily,
+        axisState: {
+          bold: summary.bold, italic: summary.italic,
+          boldAvailable: true, italicAvailable: true, mixed: true,
+        },
+      };
+    }
+    const slots = FAMILY_MATRIX.get(summary.family);
+    return {
+      displayFamily: summary.family,
+      axisState: {
+        bold: summary.bold, italic: summary.italic,
+        boldAvailable: slots?.bold !== null,
+        italicAvailable: slots?.italic !== null,
+        mixed: false,
+      },
+    };
+  }
+
+  public dispose(): void {
+    PreviewPanel.suppressedThisSession = true;
+    PreviewPanel.currentPanel = undefined;
+    this._panel.dispose();
+    for (const d of this._disposables) {
+      d.dispose();
+    }
+    this._disposables = [];
+  }
+}
