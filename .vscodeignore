@@ -25,3 +25,8 @@ venv/**
 
 # the github-facing readme; the listing uses README.marketplace.md via --readme-path
 README.md
+
+# the CLI is a separate npm package, not part of the extension
+cli/**
+cli-build.js
+src/cli/**
