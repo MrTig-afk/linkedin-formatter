@@ -521,12 +521,20 @@ body {
 }
 
 .emoji-picker {
-  max-width: 555px;
-  width: 100%;
-  margin: 0 auto 12px;
+  /* Overlay pinned under the sticky toolbar. In flow, the picker opened at
+     its markup position near the TOP of the document - scroll a long post
+     and the button stays pinned while the picker opens hundreds of pixels
+     above the viewport, i.e. invisibly. Fixed tracks the toolbar at any
+     scroll position and shifts no layout. */
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(555px, calc(100% - 32px));
+  z-index: 20;
   background: var(--card);
   border-radius: 8px;
-  box-shadow: 0 0 0 1px var(--line), 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 0 0 1px var(--line), 0 4px 12px rgba(0, 0, 0, 0.35);
   max-height: 320px;
   display: flex;
   flex-direction: column;
