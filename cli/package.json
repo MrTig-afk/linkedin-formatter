@@ -1,0 +1,32 @@
+{
+  "name": "linkedin-fmt",
+  "version": "0.1.0",
+  "description": "Style LinkedIn posts with real Unicode from the command line. No network, no dependencies.",
+  "license": "MIT",
+  "author": "Kaushik Narumanchi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MrTig-afk/linkedin-formatter.git",
+    "directory": "cli"
+  },
+  "homepage": "https://github.com/MrTig-afk/linkedin-formatter",
+  "keywords": [
+    "linkedin",
+    "unicode",
+    "formatting",
+    "cli",
+    "bold",
+    "italic"
+  ],
+  "bin": {
+    "linkedin-fmt": "dist/linkedin-fmt.js"
+  },
+  "files": [
+    "dist/linkedin-fmt.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true
+}

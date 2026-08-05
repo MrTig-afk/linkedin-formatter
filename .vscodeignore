@@ -28,5 +28,9 @@ README.md
 
 # Internal working material - never in the package
 project_summary.txt
+
+# the CLI and MCP server are separate npm packages, not part of the extension
 cli/**
+cli-build.js
+src/cli/**
 mcp/**
