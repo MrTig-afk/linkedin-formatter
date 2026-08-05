@@ -42,3 +42,4 @@ CHANGELOG.md
 
 # CLI build output (the published artifact is built, not tracked)
 cli/dist/
+mcp/dist/

@@ -181,9 +181,11 @@
     "lint": "eslint src test",
     "test:unit": "npm run compile && node --test \"out/test/unit/**/*.test.js\"",
     "test:integration": "npm run compile && npm run build && vscode-test",
-    "build:cli": "node cli-build.js"
+    "build:cli": "node cli-build.js",
+    "build:mcp": "node mcp-build.js"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.96.0",

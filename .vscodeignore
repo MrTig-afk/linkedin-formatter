@@ -30,3 +30,8 @@ README.md
 cli/**
 cli-build.js
 src/cli/**
+
+# the MCP server is a separate npm package, not part of the extension
+mcp/**
+mcp-build.js
+src/mcp/**
