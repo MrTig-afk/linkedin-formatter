@@ -40,6 +40,50 @@ export type RenderUnit =
  *                  only on the HTML path - the message path never needs it)
  * @param markers - optional truncation markers
  */
+/**
+ * Split text into user-perceived characters (Unicode grapheme clusters).
+ *
+ * The previous rule - "a code point plus any trailing General_Category=M
+ * marks" - handled accents and the combining strike/underline marks, but not
+ * the three cases that matter for emoji:
+ *
+ *   family     U+1F469 ZWJ U+1F469 ZWJ U+1F467 ZWJ U+1F467   -> 7 units
+ *   skin tone  U+1F476 U+1F3FE                                -> 2 units
+ *   flag       U+1F1EC U+1F1E7                                -> 2 units
+ *
+ * ZWJ is General_Category=Cf and the modifiers/regional indicators are So,
+ * so none of them were grouped. Backspace then deleted one component and
+ * left a mangled emoji - the same defect VS Code has carried since 2017.
+ *
+ * Intl.Segmenter implements UAX #29 properly and ships in every runtime this
+ * code targets. The fallback exists only so a missing implementation
+ * degrades to the old behaviour rather than throwing.
+ */
+function graphemes(text: string): string[] {
+  const Segmenter = (Intl as { Segmenter?: new (l?: string, o?: { granularity: string }) => {
+    segment(s: string): Iterable<{ segment: string }>;
+  } }).Segmenter;
+
+  if (typeof Segmenter === 'function') {
+    const out: string[] = [];
+    for (const { segment } of new Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
+      out.push(segment);
+    }
+    return out;
+  }
+
+  // Fallback: code point plus trailing combining marks (the old rule).
+  const out: string[] = [];
+  for (const ch of text) {
+    if (out.length > 0 && isCombiningMark(ch)) {
+      out[out.length - 1] += ch;
+    } else {
+      out.push(ch);
+    }
+  }
+  return out;
+}
+
 export function buildOffsetUnits(text: string, markers?: TruncationMarker[]): RenderUnit[] {
   const units: RenderUnit[] = [];
   if (text.length === 0) { return units; }
@@ -52,40 +96,28 @@ export function buildOffsetUnits(text: string, markers?: TruncationMarker[]): Re
         .filter(m => m.position < totalCp);
 
   let utf16Offset = 0;
-  let unitText = '';
-  let unitOffset = 0;
-  let unitLen = 0;
-  let hasUnit = false;
-  // cpCount lags the iterator by one base character so a marker fires AFTER
-  // the unit it follows, not before it.
+  // cpCount counts CODE POINTS placed so far, because truncation marker
+  // positions are specified in code points (PRD S5.7), not graphemes or
+  // UTF-16 units. Changing that would move the "see more" markers.
   let cpCount = 0;
   let markerIdx = 0;
 
-  const flush = (): void => {
-    units.push({ kind: 'span', offset: unitOffset, len: unitLen, text: unitText });
+  for (const cluster of graphemes(text)) {
+    units.push({
+      kind: 'span',
+      offset: utf16Offset,
+      len: cluster.length,
+      text: cluster,
+    });
+    utf16Offset += cluster.length;
+    cpCount += [...cluster].length;
+
     while (markerIdx < sortedMarkers.length &&
            sortedMarkers[markerIdx].position <= cpCount) {
       units.push({ kind: 'marker', label: sortedMarkers[markerIdx].label });
       markerIdx++;
     }
-  };
-
-  for (const ch of text) {
-    if (isCombiningMark(ch) && hasUnit) {
-      unitText += ch;
-      unitLen += ch.length;
-      cpCount++;
-    } else {
-      if (hasUnit) { flush(); }
-      unitText = ch;
-      unitOffset = utf16Offset;
-      unitLen = ch.length;
-      hasUnit = true;
-      cpCount++;
-    }
-    utf16Offset += ch.length;
   }
-  if (hasUnit) { flush(); }
 
   return units;
 }
