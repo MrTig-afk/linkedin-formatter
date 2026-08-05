@@ -105,6 +105,21 @@ export class PreviewPanel {
    * typing and nulled the caret - the "cursor vanishes on Ctrl+Z" bug.
    */
   private _historyInFlight = false;
+  /**
+   * Diagnostics for the caret investigation (branch-only, not shipped).
+   * Every caret-relevant event lands here with a timestamp, so a repro of
+   * "typing jumped lines" turns into a readable trace instead of a guess.
+   * View > Output > "LinkedIn Formatter Diag".
+   */
+  private readonly _diag = vscode.window.createOutputChannel('LinkedIn Formatter Diag');
+
+  private log(event: string): void {
+    const t = String(Date.now() % 1_000_000).padStart(6, '0');
+    this._diag.appendLine(
+      `${t} ${event} | caret=${this._cardCaret} assoc=${this._cardCaretAssoc}`
+      + ` pending=${this._pendingBold}/${this._pendingItalic}`
+      + ` selfEdits=${this._selfEditsInFlight} history=${this._historyInFlight}`);
+  }
   /** Toolbar state (family|bold|italic) as of the last render. */
   private _lastToolbarKey = '';
   /** ~/.gitconfig identity, read once per panel; nulls when unavailable. */
@@ -245,12 +260,15 @@ export class PreviewPanel {
       // for nothing.
       if (event.contentChanges.length === 0) { return; }
       if (this._selfEditsInFlight > 0) {
+        this.log('docChange classified SELF');
         this._selfEditsInFlight--;
       } else if (this._historyInFlight) {
+        this.log('docChange classified HISTORY');
         // Our own undo/redo. Not external: the user asked for it from the
         // card, so the card must stay armed. The caret is recomputed from
         // the editor once the command resolves.
       } else {
+        this.log('docChange classified EXTERNAL - caret nulled');
         // External change (typing, undo): the stored offsets are stale.
         this._restoreSelection = null;
         this._pendingExternal = true;
@@ -264,12 +282,14 @@ export class PreviewPanel {
     // (typing, emoji) is visible. Re-render only when the caret moved.
     vscode.window.onDidChangeTextEditorSelection((event) => {
       if (event.textEditor.document.uri.toString() !== this._trackedUri) { return; }
+      this.log('editor selection changed -> update()');
       const offset = event.textEditor.document.offsetAt(event.selections[0].active);
       if (offset === this._lastCaretOffset) { return; }
       this.update(event.textEditor.document);
     }, null, this._disposables);
 
     this._panel.webview.onDidReceiveMessage((raw: unknown) => {
+      this.log(`rx ${JSON.stringify(raw).slice(0, 120)}`);
       const doc = vscode.workspace.textDocuments.find(
         d => d.uri.toString() === this._trackedUri
       );
@@ -450,6 +470,8 @@ export class PreviewPanel {
       // Ctrl+B/I override, fall back to the toolbar family. Pure, and
       // unit-tested in the core - the lit button uses the same function,
       // so what you see promised is what you get.
+      this.log(`insertText USING insertAt=${insertAt}`
+        + ` (msg.offset=${message.offset}, _cardCaret won=${this._cardCaret !== null})`);
       const styleId = resolveTypingStyle(
         full, insertAt, this._pendingBold, this._pendingItalic, this._activeFamily);
       const style = ALL_STYLES.find(st => st.id === styleId);
@@ -645,6 +667,7 @@ export class PreviewPanel {
     if (this._hasRendered && structuralKey === this._lastStructuralKey) {
       const external = this._pendingExternal;
       this._pendingExternal = false;
+      this.log(`tx render external=${external} textLen=${text.length}`);
       void this._panel.webview.postMessage({
         type: 'render',
         units: buildOffsetUnits(text, markers),
