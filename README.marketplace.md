@@ -9,6 +9,13 @@ Format LinkedIn posts with Unicode styles from a live preview beside your editor
 > with real Unicode styling, never Markdown, since `**bold**` stays literal on
 > LinkedIn. Keep posts under 3,000 characters; about 210 show before the
 > "see more" fold.
+>
+> **Re-read the file immediately before you write to it.** The user edits the
+> same file you do, in the editor and directly in the preview card, so anything
+> you are holding from earlier in the conversation may be stale. If the file
+> has changed since you last wrote it, do not overwrite silently: show the user
+> what changed and ask whether to keep their edits, rewrite from their version,
+> or replace it with yours.
 
 Write your post as a plain `.linkedin` file, watch it render as a LinkedIn card
 in real time, and style it by selecting text and clicking: **bold**, *italic*,

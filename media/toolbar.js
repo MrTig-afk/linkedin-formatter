@@ -572,6 +572,24 @@
     return d && d.type === 'render' && Object.prototype.toString.call(d.units) === '[object Array]';
   }
 
+  // Visible cue that typing just disarmed. The class is removed on the
+  // animation end AND on a timer: animationend does not fire when the tab
+  // is hidden or when reduced-motion turns the animation off, and a class
+  // left stuck on would make the next flash a no-op.
+  var interruptTimer = null;
+  function flashInterrupted() {
+    var card = document.querySelector('.linkedin-card');
+    if (!card) { return; }
+    card.classList.remove('typing-interrupted');
+    void card.offsetWidth;          // reflow, so re-adding restarts it
+    card.classList.add('typing-interrupted');
+    if (interruptTimer !== null) { clearTimeout(interruptTimer); }
+    interruptTimer = setTimeout(function () {
+      interruptTimer = null;
+      card.classList.remove('typing-interrupted');
+    }, 700);
+  }
+
   function applyRender(payload) {
     var frag = document.createDocumentFragment();
     for (var i = 0; i < payload.units.length; i++) {
@@ -601,7 +619,13 @@
     // this webview is holding. Disarm rather than insert somewhere wrong; the
     // next click re-arms. Dropping a keystroke is recoverable, putting one in
     // the wrong place silently is not.
-    if (payload.external === true) { caretOffset = null; }
+    if (payload.external === true) {
+      // Only signal when typing was actually armed. Flashing at someone who
+      // was not typing is noise, and noise gets ignored - including the time
+      // it matters.
+      if (caretOffset !== null) { flashInterrupted(); }
+      caretOffset = null;
+    }
 
     var c = payload.counter;
     var counterEl = document.getElementById('char-counter');
