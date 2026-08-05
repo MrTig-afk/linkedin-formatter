@@ -461,6 +461,11 @@
       var btn = e.target;
       if (!btn.classList || !btn.classList.contains('emoji-item')) { return; }
       vscode.postMessage({ type: 'insertEmoji', emoji: btn.dataset.emoji });
+      // Hand focus straight back to typing; the extension advances the
+      // caret past the emoji and echoes it with the next render.
+      if (caretOffset !== null && typeCatcher) {
+        typeCatcher.focus({ preventScroll: true });
+      }
       // Hide the picker and reset the search input.
       if (emojiPicker) { emojiPicker.setAttribute('hidden', ''); }
       if (emojiSearch) {
@@ -509,6 +514,21 @@
     var caret = document.createElement('span');
     caret.className = 'card-caret';
     caret.setAttribute('aria-hidden', 'true');
+
+    // assoc 'before': lean on the character BEHIND the caret. At a soft
+    // wrap this is the difference between drawing at the end of the line
+    // the user is on and hopping to the start of the next one.
+    if (caretAssoc === 'before') {
+      var prevSpans = offsetSpans();
+      for (var pi = 0; pi < prevSpans.length; pi++) {
+        var po = parseInt(prevSpans[pi].dataset.offset, 10);
+        var pl = parseInt(prevSpans[pi].dataset.len, 10);
+        if (!isNaN(po) && !isNaN(pl) && po + pl === caretOffset) {
+          body.insertBefore(caret, prevSpans[pi].nextSibling);
+          return;
+        }
+      }
+    }
 
     var target = body.querySelector('span[data-offset="' + caretOffset + '"]');
     if (target) {
@@ -571,12 +591,30 @@
    * those windows was inserted wherever the extension last believed the
    * caret to be - usually somewhere further up the post.
    */
-  function setCaret(offset) {
+  /**
+   * Which side of a soft-wrap the caret leans on. At a wrap point the
+   * offset alone names TWO positions - end of this visual line and start
+   * of the next - so drawing needs to know which one is meant. 'before'
+   * sticks to the character behind (End, typing); 'after' to the one
+   * ahead (Home, clicks, most movement).
+   */
+  var caretAssoc = 'after';
+
+  function setCaret(offset, assoc) {
     caretOffset = offset;
+    caretAssoc = assoc || 'after';
     drawCardCaret();
     if (offset !== null) {
-      vscode.postMessage({ type: 'setCaret', offset: offset });
+      vscode.postMessage({ type: 'setCaret', offset: offset, assoc: caretAssoc });
     }
+  }
+
+  /** Disarm typing AND tell the extension, so it cannot keep a stale caret
+   *  and quietly aim the next emoji or edit at a spot the user left. */
+  function clearCaret() {
+    caretOffset = null;
+    clearCardCaret();
+    vscode.postMessage({ type: 'clearCaret' });
   }
 
   function collapsedCaretOffset() {
@@ -587,29 +625,64 @@
     var span = closestOffsetSpan(range.startContainer);
     if (!span) { return null; }
     var base = parseInt(span.dataset.offset, 10);
+    var len = parseInt(span.dataset.len, 10);
     if (isNaN(base)) { return null; }
     // Snap: clicking the right half of a two-unit styled character would
-    // otherwise land between its surrogates.
-    return snapToSpanBoundary(base + range.startOffset);
+    // otherwise land between its surrogates. Whether the raw point was at
+    // or past the span's end also tells us which side the caret should
+    // lean on - clicking the tail of the last character on a wrapped line
+    // must draw there, not at the start of the next line.
+    var raw = base + range.startOffset;
+    return {
+      offset: snapToSpanBoundary(raw),
+      assoc: (!isNaN(len) && raw >= base + len) ? 'before' : 'after'
+    };
   }
 
   if (typeCatcher && body) {
     // Only a collapsed click arms typing. A drag-selection must keep focus in
     // the body, or the selection the toolbar acts on would be destroyed.
-    body.addEventListener('click', function () {
-      var offset = collapsedCaretOffset();
-      if (offset === null) {
-        // Not a caret click - a drag-selection, or a click outside any offset
-        // span. Disarm: keeping the previous offset armed would make the next
-        // keystroke land wherever the caret used to be. Focus stays in the
-        // body so the toolbar can still act on the selection.
-        caretOffset = null;
-        clearCardCaret();
+    body.addEventListener('click', function (e) {
+      var sel = window.getSelection();
+      if (sel && !sel.isCollapsed) {
+        // A drag-selection. Disarm typing - and TELL the extension, or it
+        // keeps the previous caret and aims the next emoji at it. Focus
+        // stays in the body so the toolbar can act on the selection.
+        clearCaret();
         return;
+      }
+
+      var hit = collapsedCaretOffset();
+      var offset;
+      var assoc;
+      if (hit !== null) {
+        offset = hit.offset;
+        assoc = hit.assoc;
+      } else {
+        // Clicked inside the card but not on a character - the padding, or
+        // the empty area under the last line. Every editor treats that as
+        // 'put me at the nearest position', not as a dead click. (The dead
+        // click was worse than useless: it silently desynced the two sides
+        // and the next emoji landed wherever the extension last heard.)
+        var spans = offsetSpans();
+        if (spans.length === 0) {
+          offset = 0;
+          assoc = 'after';
+        } else {
+          var last = spans[spans.length - 1].getBoundingClientRect();
+          if (e.clientY > last.bottom) {
+            offset = documentEnd();
+            assoc = 'before';
+          } else {
+            var near = offsetNearest(e.clientX, e.clientY);
+            offset = near === null ? documentEnd() : near;
+            assoc = near === null ? 'before' : 'after';
+          }
+        }
       }
       desiredX = null;
       typeCatcher.focus({ preventScroll: true });
-      setCaret(offset);
+      setCaret(offset, assoc);
     });
 
     // 'input' fires once per committed change, including at the end of an IME
@@ -747,7 +820,7 @@
       // it matters.
       if (caretOffset !== null) { flashInterrupted(); }
       caretOffset = null;
-    } else if (typeof payload.caret === 'number' && caretOffset !== null) {
+    } else if (typeof payload.caret === 'number') {
       // The extension owns the caret, because only it knows how long the
       // styled text it inserted actually was. Our optimistic value exists
       // solely to draw between keystrokes; correct it whenever the truth
@@ -755,7 +828,12 @@
       // and inserts start landing inside the previous one.
       // Assign directly, never through setCaret: this value CAME from the
       // extension, and posting it back would be an endless round trip.
+      // (Re)arm from the extension's truth - including from a disarmed
+      // state, which is how typing comes back after our own undo.
       caretOffset = payload.caret;
+      if (payload.caretAssoc === 'before' || payload.caretAssoc === 'after') {
+        caretAssoc = payload.caretAssoc;
+      }
       drawCardCaret();
     }
 
@@ -1018,11 +1096,11 @@
   }
 
   /** Apply a computed caret position. null means 'nowhere to go'; stay put. */
-  function moveTo(next, keepColumn) {
+  function moveTo(next, keepColumn, assoc) {
     if (caretOffset === null) { return false; }
     if (!keepColumn) { desiredX = null; }
     if (next === null) { return true; }   // handled: at an edge, do not fall through
-    setCaret(next);
+    setCaret(next, assoc);
     return true;
   }
 
@@ -1031,7 +1109,7 @@
   function moveLineUp()    { return moveTo(moveVertical('up'), true); }
   function moveLineDown()  { return moveTo(moveVertical('down'), true); }
   function moveDocStart()  { return moveTo(0, false); }
-  function moveDocEnd()    { return moveTo(documentEnd(), false); }
+  function moveDocEnd()    { return moveTo(documentEnd(), false, 'before'); }
 
   // -------------------------------------------------------------
   // Enter: insert a newline.
@@ -1080,11 +1158,35 @@
     if (best === null) { return null; }
     var o = parseInt(best.dataset.offset, 10);
     if (which === 'start') { return o; }
+
+    // End: skip trailing whitespace. A space at a soft-wrap point HANGS past
+    // the wrap edge (CSS pre-wrap), so a caret element placed after it gets
+    // pushed to the next visual line - the exact trailing-space bug CodeMirror
+    // documents (codemirror/dev#1255). Users read end-of-line as after the
+    // last visible character anyway.
+    var rowSpans = [];
+    var rect = caretRect();
+    if (rect) {
+      var midY = rect.top + rect.height / 2;
+      var all = offsetSpans();
+      for (var k = 0; k < all.length; k++) {
+        var rr = all[k].getBoundingClientRect();
+        if (rr.height && Math.abs((rr.top + rr.height / 2) - midY) <= rr.height / 2) {
+          rowSpans.push(all[k]);
+        }
+      }
+    }
+    for (var j = rowSpans.length - 1; j >= 0; j--) {
+      if (!isSpaceSpan(rowSpans[j])) {
+        return parseInt(rowSpans[j].dataset.offset, 10) +
+               parseInt(rowSpans[j].dataset.len, 10);
+      }
+    }
     return o + parseInt(best.dataset.len, 10);
   }
 
   function moveLineStart() { return moveTo(lineBoundary('start'), false); }
-  function moveLineEnd()   { return moveTo(lineBoundary('end'), false); }
+  function moveLineEnd()   { return moveTo(lineBoundary('end'), false, 'before'); }
 
   /**
    * Forward word motion differs by platform, and it is not a detail:
@@ -1218,6 +1320,15 @@
     }
     return map;
   })();
+
+  // When focus comes back to the webview - returning from an undo that had
+  // to focus the editor, for instance - typing should just work again
+  // without a re-click, so put focus back in the catcher if we are armed.
+  window.addEventListener('focus', function () {
+    if (caretOffset !== null && typeCatcher) {
+      typeCatcher.focus({ preventScroll: true });
+    }
+  });
 
   document.addEventListener('keydown', function (e) {
     // Never fight an active IME: mutating the DOM mid-composition aborts it.

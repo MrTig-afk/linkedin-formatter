@@ -203,16 +203,17 @@ test('previewPanel resolves typed text through family + latched axes', () => {
   const idx = src.indexOf("message.type === 'insertText'");
   assert.ok(idx !== -1, "insertText handler not found");
   const block = src.slice(idx, idx + 2200);   // widened: the handler grew
-  // Issue #2: typing resolves the active family AND the latched axes.
-  // nearestSupported cascades when the family cannot express the intent
-  // (monospace has no bold), so this never throws and never guesses.
+  // The Word model: typing inherits from the run at the caret, a pending
+  // Ctrl+B/I override beats inheritance for that axis, the toolbar family is
+  // the fallback. All of it lives in ONE pure resolver so the insert path and
+  // the lit toolbar button can never disagree.
   assert.ok(
-    block.includes('nearestSupported('),
-    'typed text must resolve through nearestSupported (PRD S7.4 M4.4, issue #2)'
+    block.includes('resolveTypingStyle('),
+    'typed text must resolve through resolveTypingStyle (PRD S7.4, issue #2)'
   );
   assert.ok(
-    block.includes('this._activeFamily') && block.includes('this._activeBold')
-      && block.includes('this._activeItalic'),
-    'typing must honour the active family and both latched axes'
+    block.includes('this._activeFamily') && block.includes('this._pendingBold')
+      && block.includes('this._pendingItalic'),
+    'typing must honour the fallback family and both pending axis overrides'
   );
 });

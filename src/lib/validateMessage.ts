@@ -36,7 +36,7 @@ export function validateMessage(
   if (type !== 'applyStyle' && type !== 'clearFormatting'
       && type !== 'cursorSync' && type !== 'insertEmoji'
       && type !== 'insertText' && type !== 'replaceText'
-      && type !== 'setCaret'
+      && type !== 'setCaret' && type !== 'clearCaret'
       && type !== 'setFamily' && type !== 'convertFamily'
       && type !== 'toggleAxis' && type !== 'selectionState'
       && type !== 'undo' && type !== 'redo') {
@@ -178,12 +178,27 @@ export function validateMessage(
     return { valid: true, message: { type: 'selectionState', start, end } };
   }
 
+  if (type === 'clearCaret') {
+    return { valid: true, message: { type: 'clearCaret' } };
+  }
+
   if (type === 'setCaret') {
     const rawOffset = obj['offset'];
     if (!isValidOffset(rawOffset)) {
       return { valid: false, reason: 'invalid offset' };
     }
-    return { valid: true, message: { type: 'setCaret', offset: Math.min(rawOffset, documentLength) } };
+    const rawAssoc = obj['assoc'];
+    if (rawAssoc !== undefined && rawAssoc !== 'before' && rawAssoc !== 'after') {
+      return { valid: false, reason: 'invalid assoc' };
+    }
+    return {
+      valid: true,
+      message: {
+        type: 'setCaret',
+        offset: Math.min(rawOffset, documentLength),
+        ...(rawAssoc !== undefined ? { assoc: rawAssoc as 'before' | 'after' } : {}),
+      },
+    };
   }
 
   if (type === 'cursorSync') {

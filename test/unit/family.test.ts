@@ -10,6 +10,7 @@ import {
   toggleAxis,
   summarizeSelection,
   effectiveFamily,
+  resolveTypingStyle,
 } from '../../src/lib/family';
 import {
   ALL_STYLES,
@@ -509,4 +510,75 @@ test('effectiveFamily: mixed or letterless selections use the fallback', () => {
   const mixed = applyStyle('a', mono) + applyStyle('b', boldStyle);
   assert.equal(effectiveFamily(mixed, 'sans-serif'), 'sans-serif');
   assert.equal(effectiveFamily('... \n', 'fraktur'), 'fraktur');
+});
+
+// ---------------------------------------------------------------------------
+// resolveTypingStyle: the Word model for what typing produces
+//
+// One pure function decides it, shared by the insert path and the toolbar
+// display, so the lit B button and the character that appears cannot
+// disagree. pending=null means follow the text; true/false is an explicit
+// Ctrl+B/I override at this caret.
+// ---------------------------------------------------------------------------
+
+const styleById = (id: string) => ALL_STYLES.find(s => s.id === id)!;
+const boldText = (t: string) => applyStyle(t, styleById('bold'));
+
+test('typing in plain text with nothing pending stays plain', () => {
+  assert.equal(resolveTypingStyle('hello ', 6, null, null, 'serif'), 'plain');
+});
+
+test('typing at the end of a bold run continues bold', () => {
+  const doc = boldText('bold');
+  assert.equal(resolveTypingStyle(doc, doc.length, null, null, 'serif'), 'bold');
+});
+
+test('inheritance survives a space and a newline', () => {
+  const sp = boldText('bold') + ' ';
+  assert.equal(resolveTypingStyle(sp, sp.length, null, null, 'serif'), 'bold');
+  const nl = boldText('bold') + '\n';
+  assert.equal(resolveTypingStyle(nl, nl.length, null, null, 'serif'), 'bold');
+});
+
+test('pending bold=false UN-bolds typing inside a bold run', () => {
+  // The case an absolute sticky toggle cannot express.
+  const doc = boldText('bold');
+  assert.equal(resolveTypingStyle(doc, doc.length, false, null, 'serif'), 'plain');
+});
+
+test('pending bold=true bolds typing in plain text', () => {
+  assert.equal(resolveTypingStyle('plain ', 6, true, null, 'serif'), 'bold');
+});
+
+test('pending italic layers onto an inherited bold run', () => {
+  const doc = boldText('bold');
+  assert.equal(resolveTypingStyle(doc, doc.length, null, true, 'serif'), 'bold-italic');
+});
+
+test('inherited family carries: typing after script with pending bold gives bold script', () => {
+  const doc = applyStyle('fancy', styleById('script'));
+  assert.equal(resolveTypingStyle(doc, doc.length, true, null, 'serif'), 'bold-script');
+});
+
+test('the sparse matrix cascades: pending bold in a monospace run stays monospace', () => {
+  const doc = applyStyle('code', styleById('monospace'));
+  assert.equal(resolveTypingStyle(doc, doc.length, true, null, 'serif'), 'monospace');
+});
+
+test('empty document falls back to the toolbar family', () => {
+  assert.equal(resolveTypingStyle('', 0, null, null, 'script'), 'script');
+  assert.equal(resolveTypingStyle('', 0, null, null, 'serif'), 'plain');
+});
+
+test('typing at the START of a styled run inherits from the run ahead', () => {
+  const doc = boldText('bold');
+  assert.equal(resolveTypingStyle(doc, 0, null, null, 'serif'), 'bold');
+});
+
+test('uppercase-only families inherit: typing after squared stays squared', () => {
+  // The reported bug: inheritance detected squared but the old typing path
+  // used strictly-fail-closed applyStyle, so lowercase typed into a squared
+  // run came out plain while the toolbar path case-folded. One resolver now.
+  const doc = applyStyle('HELLO', styleById('squared'));
+  assert.equal(resolveTypingStyle(doc, doc.length, null, null, 'serif'), 'squared');
 });

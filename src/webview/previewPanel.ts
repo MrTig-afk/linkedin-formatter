@@ -5,8 +5,8 @@ import { buildPreviewHtml, getNonce, buildCounterHtml, type AxisState } from './
 import { validateMessage } from '../lib/validateMessage';
 import type { WebviewMessage } from '../lib/messageContract';
 import { toggleStyle, clearAllFormatting, snapToCodePointBoundary } from '../lib/toggleStyle';
-import { convertFamily, toggleAxis, summarizeSelection, effectiveFamily, nearestSupported, FAMILY_IDS, FAMILY_MATRIX, type FamilyId } from '../lib/family';
-import { ALL_STYLES, applyStyle, styleBefore, styleAfter } from '../lib/convert';
+import { convertFamily, toggleAxis, summarizeSelection, effectiveFamily, decompose, resolveTypingStyle, FAMILY_IDS, FAMILY_MATRIX, type FamilyId } from '../lib/family';
+import { ALL_STYLES, applyStyle } from '../lib/convert';
 import { countCharacters, getCounterState, LINKEDIN_POST_LIMIT, type CountingUnit } from '../lib/charCount';
 import { parseGitConfig, initialsOf, type GitIdentity } from '../lib/identity';
 import * as os from 'node:os';
@@ -71,32 +71,40 @@ export class PreviewPanel {
    */
   private _pendingExternal = false;
   /**
-   * Issue #2: bold/italic held as a MODE for typing, not just an action on a
-   * selection. Clicking B with nothing selected latches it; typing then
-   * arrives bold.
+   * Pending bold/italic for the insertion point - the Word model.
    *
-   * The latched value is INTENT and is kept even when the active family
-   * cannot express it - monospace has no bold. nearestSupported() resolves
-   * intent to what the family actually has at insert time, so switching from
-   * monospace back to serif restores the bold the user asked for rather than
-   * having silently discarded it.
+   * null means "follow the text": typing inside a bold run is bold, plain
+   * text is plain. Pressing Ctrl+B sets an explicit override RELATIVE to
+   * that - bold inside a bold run means "stop being bold". The override
+   * lives only at this caret: any caret movement clears it, exactly as a
+   * word processor drops a pending format when you click elsewhere.
+   *
+   * (The previous design was an absolute sticky boolean, which had two
+   * faults: it could not express "un-bold inside a bold run", and it was
+   * never cleared, so one Ctrl+B quietly bolded everything typed for the
+   * rest of the session.)
    */
   /**
    * The card caret, owned HERE rather than in the webview.
    *
    * The webview cannot know how long an inserted character will be: it
-   * sends "a", and styling turns that into a two-unit astral character. It
-   * used to advance its own caret by the raw length, drifting one unit per
-   * keystroke, so every insert after the first landed INSIDE the previous
-   * styled character and split it into orphaned surrogates.
-   *
+   * sends "a", and styling turns that into a two-unit astral character.
    * Only this side knows the styled length, so only this side can advance
-   * the caret correctly. The webview keeps a copy purely to draw with, and
-   * is corrected by the caret echoed back on every render.
+   * the caret correctly. The webview keeps a copy purely to draw with,
+   * corrected by the caret echoed back on every render. The immediate
+   * setCaret message is its single writer besides our own edits.
    */
   private _cardCaret: number | null = null;
-  private _activeBold = false;
-  private _activeItalic = false;
+  private _pendingBold: boolean | null = null;
+  private _pendingItalic: boolean | null = null;
+  /** Which side of a soft-wrap the caret sticks to (see SetCaretMessage). */
+  private _cardCaretAssoc: 'before' | 'after' = 'after';
+  /**
+   * True while an undo/redo WE issued is mutating the document. Without it
+   * the change event classed our own undo as an external edit, disarmed
+   * typing and nulled the caret - the "cursor vanishes on Ctrl+Z" bug.
+   */
+  private _historyInFlight = false;
   /** Toolbar state (family|bold|italic) as of the last render. */
   private _lastToolbarKey = '';
   /** ~/.gitconfig identity, read once per panel; nulls when unavailable. */
@@ -238,6 +246,10 @@ export class PreviewPanel {
       if (event.contentChanges.length === 0) { return; }
       if (this._selfEditsInFlight > 0) {
         this._selfEditsInFlight--;
+      } else if (this._historyInFlight) {
+        // Our own undo/redo. Not external: the user asked for it from the
+        // card, so the card must stay armed. The caret is recomputed from
+        // the editor once the command resolves.
       } else {
         // External change (typing, undo): the stored offsets are stale.
         this._restoreSelection = null;
@@ -298,15 +310,22 @@ export class PreviewPanel {
     }
 
     if (message.type === 'toggleAxis') {
-      // A collapsed range carries no text to restyle, so it means the user
-      // clicked B or I with nothing selected: latch the mode instead.
+      // Ctrl+B with nothing selected: flip the axis RELATIVE to what typing
+      // would produce right now. Inside a bold run that means "stop being
+      // bold"; in plain text it means "start". An absolute sticky toggle
+      // cannot express the first of those - and it was never cleared, so one
+      // press quietly bolded everything typed for the rest of the session.
       if (message.start === message.end) {
+        const latchText = doc.getText();
+        const at = this._cardCaret ?? latchText.length;
+        const effective = decompose(resolveTypingStyle(
+          latchText, at, this._pendingBold, this._pendingItalic, this._activeFamily));
         if (message.axis === 'bold') {
-          this._activeBold = !this._activeBold;
+          this._pendingBold = !(effective?.bold ?? false);
         } else {
-          this._activeItalic = !this._activeItalic;
+          this._pendingItalic = !(effective?.italic ?? false);
         }
-        this.update(doc);   // re-render so the button shows as latched
+        this.update(doc);   // re-render so the button shows the new state
         return;
       }
       this.applyEdit(doc, message.start, message.end, (text) =>
@@ -326,6 +345,7 @@ export class PreviewPanel {
       // from the card for the duration. Give it back afterwards and put the
       // caret where the undo left the editor, otherwise the caret simply
       // vanishes and the user has lost their place in the card.
+      this._historyInFlight = true;
       void vscode.window.showTextDocument(editor.document, {
         viewColumn: editor.viewColumn,
         preserveFocus: false,
@@ -333,13 +353,19 @@ export class PreviewPanel {
         () => vscode.commands.executeCommand(command),
         (err) => console.error('[LinkedIn Preview] undo/redo failed:', err),
       ).then(() => {
+        this._historyInFlight = false;
         const after = vscode.window.visibleTextEditors.find(
           e => e.document.uri.toString() === this._trackedUri);
         if (after) {
+          // Land the card caret where the undo left the editor, leaning on
+          // the character behind it, the way undo leaves you in Word.
           this._cardCaret = after.document.offsetAt(after.selection.active);
+          this._cardCaretAssoc = 'before';
         }
         this._panel.reveal(undefined, false);   // focus returns to the card
-      }, () => { /* focus restore is best effort */ });
+        // Push a fresh render so the webview re-arms from the echoed caret.
+        if (after) { this.update(after.document); }
+      }, () => { this._historyInFlight = false; });
       return;
     }
 
@@ -364,13 +390,33 @@ export class PreviewPanel {
       // Cheap and frequent: no edit, no render, just the truth about where
       // the caret is so the next insert lands in the right place.
       this._cardCaret = message.offset;
+      this._cardCaretAssoc = message.assoc ?? 'after';
+      // Moving the caret drops any pending Ctrl+B/I, as a word processor
+      // does. (The render echo does not pass through here, so a pending
+      // format survives an actual typing run.)
+      this._pendingBold = null;
+      this._pendingItalic = null;
+      return;
+    }
+
+    if (message.type === 'clearCaret') {
+      // The card disarmed (drag-selection or click-away). Forgetting is the
+      // point: holding the previous value is how an emoji picked seconds
+      // later ended up inserted at a spot the user had long left.
+      this._cardCaret = null;
+      this._pendingBold = null;
+      this._pendingItalic = null;
       return;
     }
 
     if (message.type === 'cursorSync') {
       this._restoreSelection = null;
-      // A click is the user stating where the caret is; trust it.
-      this._cardCaret = message.offset;
+      // Deliberately does NOT touch _cardCaret. This message is deferred
+      // 200ms (to survive double-clicks) and carries only the coarse span
+      // offset. It used to overwrite the precise caret here - landing in
+      // the middle of a typing burst and yanking every later character
+      // back to the click position, mid-word. setCaret, sent immediately
+      // and precisely, is the only writer for the card caret now.
       const editor = vscode.window.visibleTextEditors.find(
         e => e.document.uri.toString() === this._trackedUri
       );
@@ -391,41 +437,32 @@ export class PreviewPanel {
       // The message offset is advisory: it is what the webview believed
       // when the key was pressed. Our own caret wins whenever we have one,
       // because during a fast burst the webview is a keystroke behind.
-      const insertAt = this._cardCaret ?? message.offset;
-      const position = doc.positionAt(insertAt);
-      // M4.4 + issue #2: typed text takes the toolbar's active family AND
-      // whichever axes are latched. nearestSupported cascades when the
-      // family cannot express the intent (monospace has no bold): exact ->
-      // drop italic -> drop bold -> regular. It always resolves.
-      // Continue the run being typed into: the style of the character before
-      // the caret wins, so typing at the end of a bold word stays bold and
-      // typing inside script stays script.
-      //
-      // The toolbar is the FALLBACK, not the override - it applies at the
-      // start of a document, after plain text, or wherever there is nothing to
-      // inherit. Otherwise picking a family would silently re-style text the
-      // user is only appending to.
       const full = doc.getText();
-      // Clicking the right half of a styled character yields an offset INSIDE
-      // a surrogate pair. Inserting there would split the character; reading
-      // back from there sees a lone surrogate and detects no style at all.
-      // Snap backward to the start of the character first.
-      const safeOffset = snapToCodePointBoundary(full, insertAt, 'backward');
+      // Snap first: clicking the right half of a styled character yields an
+      // offset inside a surrogate pair, and both inserting there and reading
+      // style context from there would go wrong.
+      const insertAt = snapToCodePointBoundary(
+        full, this._cardCaret ?? message.offset, 'backward');
+      const position = doc.positionAt(insertAt);
 
-      // Inherit from the character before the caret; if that is plain (or the
-      // caret is at the very start of a styled run), try the character after,
-      // so clicking at the front of a bold word and typing still gives bold.
-      const inherited = styleBefore(full, safeOffset) ?? styleAfter(full, safeOffset);
-      const resolved = nearestSupported(
-        this._activeFamily, this._activeBold, this._activeItalic);
-      const style = inherited ?? ALL_STYLES.find(s => s.id === resolved.styleIdOrPlain);
+      // One resolver decides what typing produces here: inherit from the
+      // run being typed into (skipping whitespace), apply any pending
+      // Ctrl+B/I override, fall back to the toolbar family. Pure, and
+      // unit-tested in the core - the lit button uses the same function,
+      // so what you see promised is what you get.
+      const styleId = resolveTypingStyle(
+        full, insertAt, this._pendingBold, this._pendingItalic, this._activeFamily);
+      const style = ALL_STYLES.find(st => st.id === styleId);
       const styled = style === undefined
-        ? message.text                       // regular serif IS plain ASCII
+        ? message.text                       // 'plain': serif regular IS ASCII
         : applyStyle(message.text, style);
       const edit = new vscode.WorkspaceEdit();
       edit.insert(doc.uri, position, styled);
-      // Advance by what was ACTUALLY inserted, not by what was typed.
+      // Advance by what was ACTUALLY inserted, not by what was typed, and
+      // lean the caret on the character just typed so it renders at the end
+      // of a wrapped line rather than the start of the next one.
       this._cardCaret = insertAt + styled.length;
+      this._cardCaretAssoc = 'before';
       // Mark as ours so the resulting change is not mistaken for an external
       // edit, which would clear the selection restore.
       this._selfEditsInFlight += 1;
@@ -447,6 +484,7 @@ export class PreviewPanel {
       const edit = new vscode.WorkspaceEdit();
       edit.replace(doc.uri, range, message.text);
       this._cardCaret = message.start + message.text.length;
+      this._cardCaretAssoc = 'after';
       this._selfEditsInFlight += 1;
       vscode.workspace.applyEdit(edit).then(
         undefined,
@@ -471,6 +509,7 @@ export class PreviewPanel {
       const edit = new vscode.WorkspaceEdit();
       edit.insert(doc.uri, position, message.emoji);
       this._cardCaret = doc.offsetAt(position) + message.emoji.length;
+      this._cardCaretAssoc = 'before';
       vscode.workspace.applyEdit(edit).then(
         undefined,
         (err) => console.error('[LinkedIn Preview] insertEmoji failed:', err),
@@ -601,6 +640,7 @@ export class PreviewPanel {
         // Authoritative caret. The webview draws with its own optimistic
         // copy between keystrokes, then snaps to this when the render lands.
         caret: this._cardCaret,
+        caretAssoc: this._cardCaretAssoc,
         toolbar: {
           family: displayFamily,
           bold: axisState?.bold ?? false,
@@ -649,17 +689,22 @@ export class PreviewPanel {
       : '';
     const summary = selectionText.length > 0 ? summarizeSelection(selectionText) : null;
     if (!summary) {
-      // No selection: the buttons reflect the TYPING MODE, so a latched axis
-      // is visible. Without this the mode would be invisible state and users
-      // would not know why their typing turned bold.
-      const activeSlots = FAMILY_MATRIX.get(this._activeFamily);
+      // No selection: the buttons show what TYPING at the caret will
+      // produce - inherited run, pending override and fallback resolved by
+      // the same function the insert path uses, so a lit button can never
+      // disagree with the text that then appears.
+      const at = this._cardCaret ?? text.length;
+      const effective = decompose(resolveTypingStyle(
+        text, at, this._pendingBold, this._pendingItalic, this._activeFamily));
+      const family = effective?.family ?? this._activeFamily;
+      const slots = FAMILY_MATRIX.get(family);
       return {
-        displayFamily: this._activeFamily,
+        displayFamily: family,
         axisState: {
-          bold: this._activeBold,
-          italic: this._activeItalic,
-          boldAvailable: activeSlots?.bold !== null,
-          italicAvailable: activeSlots?.italic !== null,
+          bold: effective?.bold ?? false,
+          italic: effective?.italic ?? false,
+          boldAvailable: slots?.bold !== null,
+          italicAvailable: slots?.italic !== null,
           mixed: false,
         },
       };

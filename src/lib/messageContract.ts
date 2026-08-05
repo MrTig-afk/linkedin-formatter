@@ -112,6 +112,24 @@ export interface ReplaceTextMessage {
 export interface SetCaretMessage {
   readonly type: 'setCaret';
   readonly offset: number;
+  /**
+   * Which side of a soft-wrap the caret sticks to. At a wrap point the
+   * offset alone is ambiguous - end-of-this-line and start-of-next-line are
+   * THE SAME offset - so without this the caret draws on the wrong line
+   * after End, and after typing at a wrap boundary. 'before' leans on the
+   * character behind the caret; 'after' (the default) on the one ahead.
+   */
+  readonly assoc?: 'before' | 'after';
+}
+
+/**
+ * The card caret disarmed - a drag-selection started, or the user clicked
+ * away. Without this the extension keeps the LAST caret it heard about and
+ * quietly inserts the next emoji or edit there, which is how emoji ended up
+ * landing several lines above where the user was looking.
+ */
+export interface ClearCaretMessage {
+  readonly type: 'clearCaret';
 }
 
 /**
@@ -136,6 +154,7 @@ export type WebviewMessage =
   | ConvertFamilyMessage
   | ToggleAxisMessage
   | SetCaretMessage
+  | ClearCaretMessage
   | SelectionStateMessage
   | UndoRedoMessage;
 
