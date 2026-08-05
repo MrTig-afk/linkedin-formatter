@@ -332,6 +332,24 @@ export class PreviewPanel {
       return;
     }
 
+    if (message.type === 'replaceText') {
+      // M4.3: backspace, delete, and typing over a selection. ONE edit, so
+      // one Ctrl+Z undoes the whole thing rather than half of it.
+      const range = new vscode.Range(
+        doc.positionAt(message.start), doc.positionAt(message.end));
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(doc.uri, range, message.text);
+      this._selfEditsInFlight += 1;
+      vscode.workspace.applyEdit(edit).then(
+        undefined,
+        (err) => {
+          this._selfEditsInFlight = Math.max(0, this._selfEditsInFlight - 1);
+          console.error('[LinkedIn Preview] replaceText failed:', err);
+        },
+      );
+      return;
+    }
+
     if (message.type === 'insertEmoji') {
       const editor = vscode.window.visibleTextEditors.find(
         e => e.document.uri.toString() === this._trackedUri

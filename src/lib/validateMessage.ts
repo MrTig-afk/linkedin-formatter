@@ -35,7 +35,7 @@ export function validateMessage(
   const type = obj['type'];
   if (type !== 'applyStyle' && type !== 'clearFormatting'
       && type !== 'cursorSync' && type !== 'insertEmoji'
-      && type !== 'insertText'
+      && type !== 'insertText' && type !== 'replaceText'
       && type !== 'setFamily' && type !== 'convertFamily'
       && type !== 'toggleAxis' && type !== 'selectionState'
       && type !== 'undo' && type !== 'redo') {
@@ -102,6 +102,37 @@ export function validateMessage(
     const offset = Math.min(rawOffset, documentLength);
 
     return { valid: true, message: { type: 'insertText', text, offset } };
+  }
+
+  if (type === 'replaceText') {
+    const text = obj['text'];
+    if (typeof text !== 'string') {
+      return { valid: false, reason: 'text must be a string' };
+    }
+    // Empty IS valid here: an empty replacement is a deletion.
+    if (text.length > MAX_INSERT_TEXT_LENGTH) {
+      return { valid: false, reason: 'text exceeds maximum insert length' };
+    }
+    if (/[\u0000-\u0008\u000B-\u001F\u007F]/.test(text)) {
+      return { valid: false, reason: 'text contains control characters' };
+    }
+
+    const rawStart = obj['start'];
+    const rawEnd = obj['end'];
+    if (!isValidOffset(rawStart)) {
+      return { valid: false, reason: 'invalid start' };
+    }
+    if (!isValidOffset(rawEnd)) {
+      return { valid: false, reason: 'invalid end' };
+    }
+    if (rawStart > rawEnd) {
+      return { valid: false, reason: 'start exceeds end' };
+    }
+
+    const start = Math.min(rawStart, documentLength);
+    const end = Math.min(rawEnd, documentLength);
+
+    return { valid: true, message: { type: 'replaceText', start, end, text } };
   }
 
   if (type === 'clearFormatting') {

@@ -80,6 +80,24 @@ export interface InsertTextMessage {
 export const MAX_INSERT_TEXT_LENGTH = 10_000;
 
 /**
+ * v2 (PRD S7.4, M4.3): replace a document range.
+ *
+ * Covers backspace, delete, and typing over a selection as ONE edit rather
+ * than a delete followed by an insert. Two edits would land as two entries on
+ * the undo stack, so a single Ctrl+Z would half-undo the change and leave the
+ * document in a state the user never typed.
+ *
+ * `text` may be empty - that is a pure deletion. `insertText` remains the
+ * collapsed-caret path; this one always carries a range.
+ */
+export interface ReplaceTextMessage {
+  readonly type: 'replaceText';
+  readonly start: number;   // UTF-16 offset, 0-based
+  readonly end: number;     // UTF-16 offset, start <= end
+  readonly text: string;    // '' to delete; up to MAX_INSERT_TEXT_LENGTH
+}
+
+/**
  * The webview's current text selection, reported on mouseup so the
  * extension can keep it highlighted across re-renders and reflect its
  * family/axes in the toolbar. start === end means no selection.
@@ -96,6 +114,7 @@ export type WebviewMessage =
   | CursorSyncMessage
   | InsertEmojiMessage
   | InsertTextMessage
+  | ReplaceTextMessage
   | SetFamilyMessage
   | ConvertFamilyMessage
   | ToggleAxisMessage

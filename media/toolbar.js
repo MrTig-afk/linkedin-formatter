@@ -610,4 +610,61 @@
     if (!isRenderPayload(event.data)) { return; }
     applyRender(event.data);
   });
+
+  // ---------------------------------------------------------------
+  // M4.3 Deletion: backspace and delete.
+  //
+  // Sent as replaceText with an empty string, so a deletion is ONE undo entry.
+  //
+  // Ranges come from the rendered spans, never from arithmetic on the caret.
+  // A span is one visual unit - a code point plus any combining marks - so
+  // deleting a span's range removes a whole character. Doing caret-1 instead
+  // would split a surrogate pair and leave half an emoji in the document.
+  //
+  // The listener is on document, not window: a keydown must be caught wherever
+  // focus sits, and focus is either the type-catcher or the card body. Only
+  // CLICK listeners are barred from document (they would swallow toolbar
+  // clicks); keydown does not have that problem.
+  // ---------------------------------------------------------------
+  function spanEndingAt(offset) {
+    var spans = body.querySelectorAll('span[data-offset]');
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      var l = parseInt(spans[i].dataset.len, 10);
+      if (!isNaN(o) && !isNaN(l) && o + l === offset) { return { start: o, end: offset }; }
+    }
+    return null;
+  }
+  function spanStartingAt(offset) {
+    var span = body.querySelector('span[data-offset="' + offset + '"]');
+    if (!span) { return null; }
+    var l = parseInt(span.dataset.len, 10);
+    if (isNaN(l)) { return null; }
+    return { start: offset, end: offset + l };
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Backspace' && e.key !== 'Delete') { return; }
+
+    // A selection in the card wins over the caret: the user is deleting what
+    // they highlighted, whichever key they pressed.
+    var sel = resolveSelectionOffsets();
+    if (sel && sel.start !== sel.end) {
+      e.preventDefault();
+      vscode.postMessage({ type: 'replaceText', start: sel.start, end: sel.end, text: '' });
+      caretOffset = sel.start;
+      return;
+    }
+
+    if (caretOffset === null) { return; }
+
+    var range = e.key === 'Backspace'
+      ? spanEndingAt(caretOffset)
+      : spanStartingAt(caretOffset);
+    if (!range) { return; }        // start of document, or end of it
+
+    e.preventDefault();
+    vscode.postMessage({ type: 'replaceText', start: range.start, end: range.end, text: '' });
+    if (e.key === 'Backspace') { caretOffset = range.start; }
+  });
 })();

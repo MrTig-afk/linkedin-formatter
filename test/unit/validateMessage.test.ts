@@ -797,3 +797,65 @@ test('insertText: rejects a non-integer offset', () => {
   assert.equal(validateMessage({ type: 'insertText', text: 'a', offset: '3' }, DOC_LEN).valid, false);
   assert.equal(validateMessage({ type: 'insertText', text: 'a' }, DOC_LEN).valid, false);
 });
+
+// ---------------------------------------------------------------------------
+// replaceText (M4.3, PRD S7.4)
+// ---------------------------------------------------------------------------
+
+test('replaceText: accepts an empty string as a deletion', () => {
+  const result = validateMessage({ type: 'replaceText', start: 2, end: 5, text: '' }, DOC_LEN);
+  assert.equal(result.valid, true);
+  if (result.valid) {
+    assert.equal((result.message as { text: string }).text, '');
+  }
+});
+
+test('replaceText: accepts a non-empty replacement (typing over a selection)', () => {
+  const result = validateMessage({ type: 'replaceText', start: 2, end: 5, text: 'hi' }, DOC_LEN);
+  assert.equal(result.valid, true);
+});
+
+test('replaceText: accepts a collapsed range (start === end)', () => {
+  const result = validateMessage({ type: 'replaceText', start: 3, end: 3, text: 'x' }, DOC_LEN);
+  assert.equal(result.valid, true);
+});
+
+test('replaceText: clamps both offsets to the document', () => {
+  const result = validateMessage(
+    { type: 'replaceText', start: DOC_LEN + 10, end: DOC_LEN + 99, text: '' }, DOC_LEN);
+  assert.equal(result.valid, true);
+  if (result.valid) {
+    const m = result.message as { start: number; end: number };
+    assert.equal(m.start, DOC_LEN);
+    assert.equal(m.end, DOC_LEN);
+  }
+});
+
+test('replaceText: rejects start > end', () => {
+  const result = validateMessage({ type: 'replaceText', start: 9, end: 2, text: '' }, DOC_LEN);
+  assert.equal(result.valid, false);
+});
+
+test('replaceText: rejects a negative offset', () => {
+  assert.equal(validateMessage({ type: 'replaceText', start: -1, end: 2, text: '' }, DOC_LEN).valid, false);
+});
+
+test('replaceText: rejects non-integer offsets', () => {
+  assert.equal(validateMessage({ type: 'replaceText', start: 1.5, end: 2, text: '' }, DOC_LEN).valid, false);
+  assert.equal(validateMessage({ type: 'replaceText', start: '1', end: 2, text: '' }, DOC_LEN).valid, false);
+});
+
+test('replaceText: rejects non-string text', () => {
+  assert.equal(validateMessage({ type: 'replaceText', start: 1, end: 2, text: null }, DOC_LEN).valid, false);
+  assert.equal(validateMessage({ type: 'replaceText', start: 1, end: 2 }, DOC_LEN).valid, false);
+});
+
+test('replaceText: rejects control characters in the replacement', () => {
+  assert.equal(validateMessage({ type: 'replaceText', start: 1, end: 2, text: '\r' }, DOC_LEN).valid, false);
+  assert.equal(validateMessage({ type: 'replaceText', start: 1, end: 2, text: '\u0000' }, DOC_LEN).valid, false);
+});
+
+test('replaceText: refuses an oversized replacement', () => {
+  const huge = 'a'.repeat(10_001);
+  assert.equal(validateMessage({ type: 'replaceText', start: 1, end: 2, text: huge }, DOC_LEN).valid, false);
+});
