@@ -3,7 +3,7 @@
   "displayName": "LinkedIn Formatter",
   "publisher": "kaushiknaru",
   "description": "Format LinkedIn posts with Unicode styles from a live preview beside your editor.",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "private": true,
   "license": "MIT",
   "icon": "media/icon.png",

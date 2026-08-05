@@ -32,8 +32,16 @@ preview picks it up automatically.
 
 ## Editing from the preview
 
-The rendered card is not just a picture; it is where most of the styling
-happens. With text selected in the card you can:
+The rendered card is a full editor. Click anywhere in it and **type**: every
+keystroke lands in the file as real Unicode, already in the style of the text
+around it. It follows word-processor conventions throughout - styles continue
+as you type, Enter carries formatting into the new paragraph, a family or
+Bold picked at the caret latches for the next thing you type, Ctrl+Z takes
+back whole words, arrows and Home/End navigate the wrapped card, and typing
+over a selection replaces it in one step. Uppercase-only families fold what
+you type ('a' in Squared becomes 🄰).
+
+With text selected in the card you can also:
 
 - **Pick a font family** from the dropdown (11 families). With a selection,
   it converts the selected text; without one, it sets the family your
@@ -43,7 +51,12 @@ happens. With text selected in the card you can:
   has no such variant in Unicode. Mixed selections show a Mixed label and
   still toggle each character in its own family.
 - **Add strikethrough or underline**, which layer on top of any letterform.
-- **Insert emoji** from the picker, at the editor's cursor position.
+  The buttons show a pressed state when the selection already carries the
+  mark, and disable on the boxed families (Squared, Circled, Fullwidth):
+  no font on any platform renders combining marks over those glyphs, so the
+  toolbar only offers what your readers can actually see.
+- **Insert emoji** from the picker, at the caret - the picker opens beside
+  the toolbar at any scroll position.
 - **Clear formatting** back to plain text with one click.
 - **Place the cursor**: click anywhere in the card and the editor cursor
   jumps to that exact spot.
