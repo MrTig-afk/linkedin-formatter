@@ -21,97 +21,62 @@ export interface TruncationMarker {
 }
 
 /**
- * Build HTML where each visual unit (code point plus any trailing combining
- * marks) is wrapped in a <span> carrying its UTF-16 document offset and
- * UTF-16 length.
+ * One item in the rendered stream: either a text unit (a code point plus any
+ * trailing combining marks) carrying its UTF-16 document offset and length, or
+ * a truncation marker.
  *
- * When `markers` are supplied, a labelled horizontal-rule div is injected
- * between spans at each marker's code-point position. Markers are only
- * injected when the text exceeds the position (there must be content after
- * the cutoff). The marker elements carry no data-offset/data-len attributes
- * and are inert to the toolbar selection logic.
- *
- * @param text - raw document text (NOT pre-escaped)
- * @param markers - optional truncation markers; omitting is backward-compatible
- * @returns HTML string safe for interpolation into the preview body.
- *          Each unit: <span data-offset="N" data-len="L">escaped-text</span>
- *          Empty input returns empty string.
+ * This is the single source of truth for what the preview shows. The HTML
+ * string path and the message path to the webview both derive from it, so
+ * the two can never disagree about an offset.
  */
-export function buildOffsetSpans(text: string, markers?: TruncationMarker[]): string {
-  if (text.length === 0) {
-    return '';
-  }
+export type RenderUnit =
+  | { readonly kind: 'span'; readonly offset: number; readonly len: number; readonly text: string }
+  | { readonly kind: 'marker'; readonly label: string };
 
-  // Fast path: no markers -- run the original loop with no overhead.
-  if (!markers || markers.length === 0) {
-    let result = '';
-    let utf16Offset = 0;
-    let unitText = '';
-    let unitOffset = 0;
-    let unitLen = 0;
-    let hasUnit = false;
+/**
+ * Split text into render units, interleaving truncation markers.
+ *
+ * @param text    - raw document text (NOT escaped; escaping is the caller's job
+ *                  only on the HTML path - the message path never needs it)
+ * @param markers - optional truncation markers
+ */
+export function buildOffsetUnits(text: string, markers?: TruncationMarker[]): RenderUnit[] {
+  const units: RenderUnit[] = [];
+  if (text.length === 0) { return units; }
 
-    for (const ch of text) {
-      if (isCombiningMark(ch) && hasUnit) {
-        unitText += ch;
-        unitLen += ch.length;
-      } else {
-        if (hasUnit) {
-          result += `<span data-offset="${unitOffset}" data-len="${unitLen}">${escapeHtml(unitText)}</span>`;
-        }
-        unitText = ch;
-        unitOffset = utf16Offset;
-        unitLen = ch.length;
-        hasUnit = true;
-      }
-      utf16Offset += ch.length;
-    }
-    if (hasUnit) {
-      result += `<span data-offset="${unitOffset}" data-len="${unitLen}">${escapeHtml(unitText)}</span>`;
-    }
-    return result;
-  }
+  // Markers are only shown when there is content after the cutoff.
+  const totalCp = (!markers || markers.length === 0) ? 0 : [...text].length;
+  const sortedMarkers = (!markers || markers.length === 0)
+    ? []
+    : markers.slice().sort((a, b) => a.position - b.position)
+        .filter(m => m.position < totalCp);
 
-  // Count total code points (text is at most 3,000 chars -- negligible).
-  const totalCp = [...text].length;
-
-  // Sort ascending; filter out markers at or beyond the total (marker only
-  // shown when text exceeds the position -- there must be content after it).
-  const sortedMarkers = markers
-    .slice()
-    .sort((a, b) => a.position - b.position)
-    .filter(m => m.position < totalCp);
-
-  let result = '';
   let utf16Offset = 0;
   let unitText = '';
   let unitOffset = 0;
   let unitLen = 0;
   let hasUnit = false;
-  // cpCount tracks how many code points have been placed into units (flushed
-  // or the current in-progress unit). It lags behind the loop iterator by one
-  // base character so that the marker check fires AFTER the correct unit.
+  // cpCount lags the iterator by one base character so a marker fires AFTER
+  // the unit it follows, not before it.
   let cpCount = 0;
   let markerIdx = 0;
 
+  const flush = (): void => {
+    units.push({ kind: 'span', offset: unitOffset, len: unitLen, text: unitText });
+    while (markerIdx < sortedMarkers.length &&
+           sortedMarkers[markerIdx].position <= cpCount) {
+      units.push({ kind: 'marker', label: sortedMarkers[markerIdx].label });
+      markerIdx++;
+    }
+  };
+
   for (const ch of text) {
     if (isCombiningMark(ch) && hasUnit) {
-      // Combining mark: append to current unit, count the code point.
       unitText += ch;
       unitLen += ch.length;
       cpCount++;
     } else {
-      // Base character: flush the previous unit first (if any), then check
-      // whether any marker position has been crossed.
-      if (hasUnit) {
-        result += `<span data-offset="${unitOffset}" data-len="${unitLen}">${escapeHtml(unitText)}</span>`;
-        while (markerIdx < sortedMarkers.length &&
-               sortedMarkers[markerIdx].position <= cpCount) {
-          result += `<div class="truncation-marker"><span class="truncation-label">${escapeHtml(sortedMarkers[markerIdx].label)}</span></div>`;
-          markerIdx++;
-        }
-      }
-      // Start a new unit for this base character.
+      if (hasUnit) { flush(); }
       unitText = ch;
       unitOffset = utf16Offset;
       unitLen = ch.length;
@@ -120,16 +85,28 @@ export function buildOffsetSpans(text: string, markers?: TruncationMarker[]): st
     }
     utf16Offset += ch.length;
   }
+  if (hasUnit) { flush(); }
 
-  // Flush the last unit and check for any remaining markers.
-  if (hasUnit) {
-    result += `<span data-offset="${unitOffset}" data-len="${unitLen}">${escapeHtml(unitText)}</span>`;
-    while (markerIdx < sortedMarkers.length &&
-           sortedMarkers[markerIdx].position <= cpCount) {
-      result += `<div class="truncation-marker"><span class="truncation-label">${escapeHtml(sortedMarkers[markerIdx].label)}</span></div>`;
-      markerIdx++;
-    }
-  }
+  return units;
+}
 
-  return result;
+/**
+ * Build HTML where each visual unit is wrapped in a <span> carrying its UTF-16
+ * document offset and length, with labelled truncation markers injected
+ * between spans at each marker's code-point position.
+ *
+ * Serialises buildOffsetUnits. Behaviour is unchanged from before that split.
+ *
+ * @param text - raw document text (NOT pre-escaped)
+ * @param markers - optional truncation markers
+ * @returns HTML string safe for interpolation into the preview body.
+ *          Each unit: <span data-offset="N" data-len="L">escaped-text</span>
+ *          Empty input returns empty string.
+ */
+export function buildOffsetSpans(text: string, markers?: TruncationMarker[]): string {
+  return buildOffsetUnits(text, markers).map(u =>
+    u.kind === 'span'
+      ? `<span data-offset="${u.offset}" data-len="${u.len}">${escapeHtml(u.text)}</span>`
+      : `<div class="truncation-marker"><span class="truncation-label">${escapeHtml(u.label)}</span></div>`
+  ).join('');
 }

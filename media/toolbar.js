@@ -550,4 +550,64 @@
     // caretOffset resets to null on its own. That same teardown is why
     // typing currently survives exactly one character - see M4.2.
   }
+
+  // ---------------------------------------------------------------
+  // M4.2 In-place render.
+  //
+  // The extension used to reassign webview.html on every document change,
+  // which reloaded ~52KB, cost ~25ms, and destroyed focus and the caret -
+  // so typing died after one character. It now sends the changed text here
+  // and this rebuilds the body in place. Nothing is torn down, so the
+  // type-catcher keeps focus and caretOffset survives.
+  //
+  // The payload carries STRUCTURED UNITS, never HTML. Every node below is
+  // built with createElement + textContent, so nothing on this channel is
+  // ever parsed as markup and there is no injection sink to protect. That
+  // matches the rest of this file, which uses innerHTML nowhere.
+  // ---------------------------------------------------------------
+  function isRenderPayload(d) {
+    return d && d.type === 'render' && Object.prototype.toString.call(d.units) === '[object Array]';
+  }
+
+  function applyRender(payload) {
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < payload.units.length; i++) {
+      var u = payload.units[i];
+      if (!u || typeof u !== 'object') { continue; }
+      if (u.kind === 'span') {
+        if (typeof u.text !== 'string' || typeof u.offset !== 'number') { continue; }
+        var span = document.createElement('span');
+        span.dataset.offset = String(u.offset);
+        span.dataset.len = String(u.len);
+        span.textContent = u.text;          // text, never markup
+        frag.appendChild(span);
+      } else if (u.kind === 'marker') {
+        var div = document.createElement('div');
+        div.className = 'truncation-marker';
+        var label = document.createElement('span');
+        label.className = 'truncation-label';
+        label.textContent = String(u.label === undefined ? '' : u.label);
+        div.appendChild(label);
+        frag.appendChild(div);
+      }
+    }
+    body.replaceChildren(frag);
+
+    var c = payload.counter;
+    var counterEl = document.getElementById('char-counter');
+    if (counterEl && c && typeof c.count === 'number' && typeof c.limit === 'number') {
+      var over = c.state === 'over';
+      counterEl.textContent = c.count + ' / ' + c.limit +
+        (over ? ' (-' + (c.count - c.limit) + ')' : '');
+      counterEl.className = 'char-counter' +
+        (c.state === 'warning' ? ' counter-warning' : over ? ' counter-over' : '');
+    }
+  }
+
+  // Inbound from the extension. Shape-checked before use, same discipline the
+  // extension applies to messages coming the other way.
+  window.addEventListener('message', function (event) {
+    if (!isRenderPayload(event.data)) { return; }
+    applyRender(event.data);
+  });
 })();

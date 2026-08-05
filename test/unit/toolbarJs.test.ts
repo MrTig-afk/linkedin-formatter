@@ -140,14 +140,21 @@ test('toolbar.js cursorSync offset is parsed as integer with parseInt radix 10',
 
 test('toolbar.js cursorSync click listener is bound on body (#preview-content), not document or window', () => {
   // Toolbar buttons live outside #preview-content so their clicks must not
-  // bubble to the cursorSync handler.  The listener must be on body, never
-  // on document or window.
+  // bubble to the cursorSync handler.  The CLICK listener must be on body,
+  // never on document or window.
+  //
+  // Narrowed in M4.2 from a blanket ban on document/window listeners to a ban
+  // on CLICK listeners specifically. The invariant this test documents has
+  // always been about click bubbling; the blanket form also forbade
+  // window.addEventListener('message'), which is the only API for receiving
+  // updates from the extension and is what lets the card update in place
+  // instead of reloading the whole page on every keystroke.
   assert.ok(
-    !src.includes('document.addEventListener('),
+    !src.includes("document.addEventListener('click'"),
     'toolbar.js must not attach any click listener to document'
   );
   assert.ok(
-    !src.includes('window.addEventListener('),
+    !src.includes("window.addEventListener('click'"),
     'toolbar.js must not attach any click listener to window'
   );
   const csIdx = src.indexOf("type: 'cursorSync'");
@@ -351,4 +358,44 @@ test('toolbar.js does not report selection state for toolbar or emoji-picker mou
   const block = src.slice(muIdx, src.indexOf('selStateTimer = setTimeout', muIdx));
   assert.ok(block.includes("el.id === 'toolbar'") && block.includes("el.id === 'emoji-picker'"),
     'mouseup on toolbar/emoji-picker must not post selectionState (the dropdown steals the selection)');
+});
+
+// ---------------------------------------------------------------------------
+// M4.2 render channel: the webview must never parse markup
+// ---------------------------------------------------------------------------
+
+test('toolbar.js never assigns innerHTML or outerHTML', () => {
+  // The extension sends structured units over the render channel, never HTML.
+  // Because nothing here is parsed as markup, there is no injection sink on
+  // that channel at all - the CSP is a second line of defence, not the only
+  // one. Added when the render channel opened in M4.2; if this ever fails,
+  // the channel gained a sink and the threat model changed with it.
+  assert.ok(
+    !/\.\s*innerHTML\s*=/.test(src),
+    'toolbar.js must not assign innerHTML'
+  );
+  assert.ok(
+    !/\.\s*outerHTML\s*=/.test(src),
+    'toolbar.js must not assign outerHTML'
+  );
+  assert.ok(
+    !src.includes('insertAdjacentHTML'),
+    'toolbar.js must not call insertAdjacentHTML'
+  );
+  assert.ok(
+    !src.includes('document.write'),
+    'toolbar.js must not call document.write'
+  );
+});
+
+test('toolbar.js shape-checks inbound render messages before using them', () => {
+  // event.data is untrusted input arriving on a new inbound boundary.
+  assert.ok(
+    src.includes("window.addEventListener('message'"),
+    'toolbar.js must listen for render messages from the extension'
+  );
+  assert.ok(
+    src.includes('isRenderPayload'),
+    'inbound render messages must be shape-checked before use'
+  );
 });

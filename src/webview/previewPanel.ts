@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
-import { buildOffsetSpans, type TruncationMarker } from '../lib/spanBuilder';
+import { buildOffsetSpans, buildOffsetUnits, type TruncationMarker } from '../lib/spanBuilder';
 import { buildPreviewHtml, getNonce, buildCounterHtml, type AxisState } from './html';
 import { validateMessage } from '../lib/validateMessage';
 import type { WebviewMessage } from '../lib/messageContract';
@@ -47,6 +47,18 @@ export class PreviewPanel {
   /** Document changes caused by our own applyEdit; they keep the restore. */
   private _selfEditsInFlight = 0;
   private _lastCaretOffset: number | null = null;
+  /**
+   * M4.2: whether a full document has been assigned to the webview yet, and
+   * the key of everything that is baked into that document rather than sent
+   * as an update (theme, identity, toolbar structure).
+   *
+   * Reassigning webview.html tears the page down and reloads ~52KB, which
+   * costs ~25ms and destroys focus and the caret. A document edit therefore
+   * goes out as a message to the page already running; only a structural
+   * change rebuilds.
+   */
+  private _hasRendered = false;
+  private _lastStructuralKey = '';
   /** Toolbar state (family|bold|italic) as of the last render. */
   private _lastToolbarKey = '';
   /** ~/.gitconfig identity, read once per panel; nulls when unavailable. */
@@ -434,6 +446,26 @@ export class PreviewPanel {
     const profileHeadline = config.get<string>('profileHeadline', '').trim()
       || this._gitIdentity.email || 'Your headline';
     const initials = profileName !== 'Your Name' ? initialsOf(profileName) : null;
+
+    // M4.2 fast path: nothing structural moved, so update the running page
+    // instead of replacing it. Structured units, never HTML - the webview
+    // builds its DOM with textContent and parses no markup (see toolbar.js).
+    const structuralKey = [
+      theme, profileName, profileHeadline, initials ?? '',
+      this._lastToolbarKey, String(showMarkers),
+    ].join('|');
+
+    if (this._hasRendered && structuralKey === this._lastStructuralKey) {
+      void this._panel.webview.postMessage({
+        type: 'render',
+        units: buildOffsetUnits(text, markers),
+        counter: { count, limit: LINKEDIN_POST_LIMIT, state },
+      });
+      return;
+    }
+
+    this._hasRendered = true;
+    this._lastStructuralKey = structuralKey;
 
     this._panel.webview.html = buildPreviewHtml(
       this._panel.webview.cspSource,
