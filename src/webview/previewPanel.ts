@@ -106,6 +106,20 @@ export class PreviewPanel {
    */
   private _historyInFlight = false;
   /**
+   * Edits from the card are SERIALIZED through this chain.
+   *
+   * Without it, a fast burst delivered keystroke N+1 while keystroke N's
+   * applyEdit was still in flight. The handler then computed the insert
+   * position against a document snapshot that did not yet contain N -
+   * offset 1044 in the trace fell mid-surrogate in the STALE text, the
+   * boundary snap pulled it back to 1043, and N+1 was inserted INSIDE the
+   * character the user had just typed. Split surrogate, garbled render,
+   * and the visible "line jump". Chaining means the document is always
+   * current when a position is computed; the few-ms serialization is far
+   * below typing cadence.
+   */
+  private _editChain: Promise<void> = Promise.resolve();
+  /**
    * Diagnostics for the caret investigation (branch-only, not shipped).
    * Every caret-relevant event lands here with a timestamp, so a repro of
    * "typing jumped lines" turns into a readable trace instead of a guess.
@@ -452,103 +466,103 @@ export class PreviewPanel {
     }
 
     if (message.type === 'insertText') {
-      // M4.1: typing in the card. The offset is already validated and clamped
-      // to the document by validateMessage, so positionAt cannot throw here.
-      // The message offset is advisory: it is what the webview believed
-      // when the key was pressed. Our own caret wins whenever we have one,
-      // because during a fast burst the webview is a keystroke behind.
-      const full = doc.getText();
-      // Snap first: clicking the right half of a styled character yields an
-      // offset inside a surrogate pair, and both inserting there and reading
-      // style context from there would go wrong.
-      const insertAt = snapToCodePointBoundary(
-        full, this._cardCaret ?? message.offset, 'backward');
-      const position = doc.positionAt(insertAt);
+      const msg = message;
+      this._editChain = this._editChain.then(async () => {
+        // The document is CURRENT here: the previous edit has landed.
+        const full = doc.getText();
+        const insertAt = this._cardCaret !== null
+          // Our own caret is a boundary by construction; clamp only.
+          ? Math.min(this._cardCaret, full.length)
+          // A webview-supplied offset is untrusted: snap off surrogates.
+          : snapToCodePointBoundary(full, msg.offset, 'backward');
+        this.log(`insertText USING insertAt=${insertAt}`
+          + ` (msg.offset=${msg.offset}, _cardCaret won=${this._cardCaret !== null})`);
 
-      // One resolver decides what typing produces here: inherit from the
-      // run being typed into (skipping whitespace), apply any pending
-      // Ctrl+B/I override, fall back to the toolbar family. Pure, and
-      // unit-tested in the core - the lit button uses the same function,
-      // so what you see promised is what you get.
-      this.log(`insertText USING insertAt=${insertAt}`
-        + ` (msg.offset=${message.offset}, _cardCaret won=${this._cardCaret !== null})`);
-      const styleId = resolveTypingStyle(
-        full, insertAt, this._pendingBold, this._pendingItalic, this._activeFamily);
-      const style = ALL_STYLES.find(st => st.id === styleId);
-      const styled = style === undefined
-        ? message.text                       // 'plain': serif regular IS ASCII
-        : applyStyle(message.text, style);
-      const edit = new vscode.WorkspaceEdit();
-      edit.insert(doc.uri, position, styled);
-      // Advance by what was ACTUALLY inserted, not by what was typed, and
-      // lean the caret on the character just typed so it renders at the end
-      // of a wrapped line rather than the start of the next one.
-      this._cardCaret = insertAt + styled.length;
-      this._cardCaretAssoc = 'before';
-      // Mark as ours so the resulting change is not mistaken for an external
-      // edit, which would clear the selection restore.
-      this._selfEditsInFlight += 1;
-      vscode.workspace.applyEdit(edit).then(
-        undefined,
-        (err) => {
+        const styleId = resolveTypingStyle(
+          full, insertAt, this._pendingBold, this._pendingItalic, this._activeFamily);
+        const style = ALL_STYLES.find(st => st.id === styleId);
+        const styled = style === undefined
+          ? msg.text                         // 'plain': serif regular IS ASCII
+          : applyStyle(msg.text, style);
+
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(doc.uri, doc.positionAt(insertAt), styled);
+        this._selfEditsInFlight += 1;
+        // Advance by what was ACTUALLY inserted, leaning on the character
+        // just typed so the caret renders at the end of a wrapped line.
+        this._cardCaret = insertAt + styled.length;
+        this._cardCaretAssoc = 'before';
+        const applied = await vscode.workspace.applyEdit(edit);
+        if (!applied) {
           this._selfEditsInFlight = Math.max(0, this._selfEditsInFlight - 1);
-          console.error('[LinkedIn Preview] insertText failed:', err);
-        },
-      );
+          this._cardCaret = insertAt;
+          this.log('insertText applyEdit REFUSED');
+        }
+      }).catch((err) => {
+        console.error('[LinkedIn Preview] insertText failed:', err);
+      });
       return;
     }
 
     if (message.type === 'replaceText') {
-      // M4.3: backspace, delete, and typing over a selection. ONE edit, so
-      // one Ctrl+Z undoes the whole thing rather than half of it.
-      const range = new vscode.Range(
-        doc.positionAt(message.start), doc.positionAt(message.end));
-      // A non-empty replacement is typing-over-a-selection: style it exactly
-      // as typing would be styled at that spot, so the character that lands
-      // matches the run it replaces. Empty stays a pure deletion. Either way
-      // it is ONE edit, so one Ctrl+Z restores the whole selection.
-      const replacement = message.text.length === 0
-        ? message.text
-        : (() => {
-            const styleId = resolveTypingStyle(
-              doc.getText(), message.start,
-              this._pendingBold, this._pendingItalic, this._activeFamily);
-            const st = ALL_STYLES.find(x => x.id === styleId);
-            return st === undefined ? message.text : applyStyle(message.text, st);
-          })();
-      const edit = new vscode.WorkspaceEdit();
-      edit.replace(doc.uri, range, replacement);
-      this._cardCaret = message.start + replacement.length;
-      this._cardCaretAssoc = 'after';
-      this._selfEditsInFlight += 1;
-      vscode.workspace.applyEdit(edit).then(
-        undefined,
-        (err) => {
+      const msg = message;
+      this._editChain = this._editChain.then(async () => {
+        const full = doc.getText();
+        const start = Math.min(msg.start, full.length);
+        const end = Math.min(msg.end, full.length);
+        const range = new vscode.Range(
+          doc.positionAt(start), doc.positionAt(end));
+        // A non-empty replacement is typing-over-a-selection: style it as
+        // typing would be styled there. Empty stays a pure deletion.
+        const replacement = msg.text.length === 0
+          ? msg.text
+          : (() => {
+              const styleId = resolveTypingStyle(
+                full, start,
+                this._pendingBold, this._pendingItalic, this._activeFamily);
+              const st = ALL_STYLES.find(x => x.id === styleId);
+              return st === undefined ? msg.text : applyStyle(msg.text, st);
+            })();
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(doc.uri, range, replacement);
+        this._selfEditsInFlight += 1;
+        this._cardCaret = start + replacement.length;
+        this._cardCaretAssoc = replacement.length === 0 ? 'after' : 'before';
+        const applied = await vscode.workspace.applyEdit(edit);
+        if (!applied) {
           this._selfEditsInFlight = Math.max(0, this._selfEditsInFlight - 1);
-          console.error('[LinkedIn Preview] replaceText failed:', err);
-        },
-      );
+          this.log('replaceText applyEdit REFUSED');
+        }
+      }).catch((err) => {
+        console.error('[LinkedIn Preview] replaceText failed:', err);
+      });
       return;
     }
 
     if (message.type === 'insertEmoji') {
-      const editor = vscode.window.visibleTextEditors.find(
-        e => e.document.uri.toString() === this._trackedUri
-      );
-      // The card caret wins. Reading editor.selection.active inserted the
-      // emoji wherever the LEFT pane happened to be, which is not where the
-      // user just clicked in the card.
-      const emojiAt = this._cardCaret
-        ?? (editor ? doc.offsetAt(editor.selection.active) : doc.getText().length);
-      const position = doc.positionAt(Math.min(emojiAt, doc.getText().length));
-      const edit = new vscode.WorkspaceEdit();
-      edit.insert(doc.uri, position, message.emoji);
-      this._cardCaret = doc.offsetAt(position) + message.emoji.length;
-      this._cardCaretAssoc = 'before';
-      vscode.workspace.applyEdit(edit).then(
-        undefined,
-        (err) => console.error('[LinkedIn Preview] insertEmoji failed:', err),
-      );
+      const msg = message;
+      this._editChain = this._editChain.then(async () => {
+        const full = doc.getText();
+        const editor = vscode.window.visibleTextEditors.find(
+          e => e.document.uri.toString() === this._trackedUri
+        );
+        const emojiAt = Math.min(
+          this._cardCaret
+            ?? (editor ? doc.offsetAt(editor.selection.active) : full.length),
+          full.length);
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(doc.uri, doc.positionAt(emojiAt), msg.emoji);
+        this._selfEditsInFlight += 1;
+        this._cardCaret = emojiAt + msg.emoji.length;
+        this._cardCaretAssoc = 'before';
+        const applied = await vscode.workspace.applyEdit(edit);
+        if (!applied) {
+          this._selfEditsInFlight = Math.max(0, this._selfEditsInFlight - 1);
+          this.log('insertEmoji applyEdit REFUSED');
+        }
+      }).catch((err) => {
+        console.error('[LinkedIn Preview] insertEmoji failed:', err);
+      });
       return;
     }
   }
