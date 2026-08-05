@@ -5,7 +5,8 @@ import { buildPreviewHtml, getNonce, buildCounterHtml, type AxisState } from './
 import { validateMessage } from '../lib/validateMessage';
 import type { WebviewMessage } from '../lib/messageContract';
 import { toggleStyle, clearAllFormatting, snapToCodePointBoundary } from '../lib/toggleStyle';
-import { convertFamily, toggleAxis, summarizeSelection, effectiveFamily, FAMILY_IDS, FAMILY_MATRIX, type FamilyId } from '../lib/family';
+import { convertFamily, toggleAxis, summarizeSelection, effectiveFamily, nearestSupported, FAMILY_IDS, FAMILY_MATRIX, type FamilyId } from '../lib/family';
+import { ALL_STYLES, applyStyle } from '../lib/convert';
 import { countCharacters, getCounterState, LINKEDIN_POST_LIMIT, type CountingUnit } from '../lib/charCount';
 import { parseGitConfig, initialsOf, type GitIdentity } from '../lib/identity';
 import * as os from 'node:os';
@@ -69,6 +70,19 @@ export class PreviewPanel {
    * trustworthy and typing must disarm rather than insert somewhere wrong.
    */
   private _pendingExternal = false;
+  /**
+   * Issue #2: bold/italic held as a MODE for typing, not just an action on a
+   * selection. Clicking B with nothing selected latches it; typing then
+   * arrives bold.
+   *
+   * The latched value is INTENT and is kept even when the active family
+   * cannot express it - monospace has no bold. nearestSupported() resolves
+   * intent to what the family actually has at insert time, so switching from
+   * monospace back to serif restores the bold the user asked for rather than
+   * having silently discarded it.
+   */
+  private _activeBold = false;
+  private _activeItalic = false;
   /** Toolbar state (family|bold|italic) as of the last render. */
   private _lastToolbarKey = '';
   /** ~/.gitconfig identity, read once per panel; nulls when unavailable. */
@@ -268,6 +282,17 @@ export class PreviewPanel {
     }
 
     if (message.type === 'toggleAxis') {
+      // A collapsed range carries no text to restyle, so it means the user
+      // clicked B or I with nothing selected: latch the mode instead.
+      if (message.start === message.end) {
+        if (message.axis === 'bold') {
+          this._activeBold = !this._activeBold;
+        } else {
+          this._activeItalic = !this._activeItalic;
+        }
+        this.update(doc);   // re-render so the button shows as latched
+        return;
+      }
       this.applyEdit(doc, message.start, message.end, (text) =>
         toggleAxis(text, message.axis, effectiveFamily(text, this._activeFamily)),
       );
@@ -328,15 +353,16 @@ export class PreviewPanel {
       // M4.1: typing in the card. The offset is already validated and clamped
       // to the document by validateMessage, so positionAt cannot throw here.
       const position = doc.positionAt(message.offset);
-      // M4.4 (PRD S7.4): typed text takes the toolbar's ACTIVE FAMILY, so
-      // picking Script in the dropdown and typing produces script characters.
-      // Serif is the default and its regular slot is plain ASCII, so typing
-      // stays plain until a family is chosen.
-      //
-      // Bold/italic axes are NOT applied here: there is no persistent axis
-      // state to read. The B/I buttons act on a selection, not as a sticky
-      // mode. Making them sticky is its own piece of work.
-      const styled = convertFamily(message.text, this._activeFamily);
+      // M4.4 + issue #2: typed text takes the toolbar's active family AND
+      // whichever axes are latched. nearestSupported cascades when the
+      // family cannot express the intent (monospace has no bold): exact ->
+      // drop italic -> drop bold -> regular. It always resolves.
+      const resolved = nearestSupported(
+        this._activeFamily, this._activeBold, this._activeItalic);
+      const style = ALL_STYLES.find(s => s.id === resolved.styleIdOrPlain);
+      const styled = style === undefined
+        ? message.text                       // regular serif IS plain ASCII
+        : applyStyle(message.text, style);
       const edit = new vscode.WorkspaceEdit();
       edit.insert(doc.uri, position, styled);
       // Mark as ours so the resulting change is not mistaken for an external
@@ -542,7 +568,20 @@ export class PreviewPanel {
       : '';
     const summary = selectionText.length > 0 ? summarizeSelection(selectionText) : null;
     if (!summary) {
-      return { displayFamily: this._activeFamily, axisState: null };
+      // No selection: the buttons reflect the TYPING MODE, so a latched axis
+      // is visible. Without this the mode would be invisible state and users
+      // would not know why their typing turned bold.
+      const activeSlots = FAMILY_MATRIX.get(this._activeFamily);
+      return {
+        displayFamily: this._activeFamily,
+        axisState: {
+          bold: this._activeBold,
+          italic: this._activeItalic,
+          boldAvailable: activeSlots?.bold !== null,
+          italicAvailable: activeSlots?.italic !== null,
+          mixed: false,
+        },
+      };
     }
     if (summary.family === null) {
       // Mixed families: a toggle still works per character (each keeps its

@@ -176,14 +176,22 @@ test('cardTheme defaults to editor (owner pick, 2026-08-04)', () => {
 // M4.4 wiring: typed text takes the active family, not the surrounding style
 // ---------------------------------------------------------------------------
 
-test('previewPanel converts typed text to the active family', () => {
+test('previewPanel resolves typed text through family + latched axes', () => {
   const src = fs.readFileSync(
     path.resolve(__dirname, '..', '..', '..', 'src', 'webview', 'previewPanel.ts'), 'utf-8');
   const idx = src.indexOf("message.type === 'insertText'");
   assert.ok(idx !== -1, "insertText handler not found");
   const block = src.slice(idx, idx + 1200);
+  // Issue #2: typing resolves the active family AND the latched axes.
+  // nearestSupported cascades when the family cannot express the intent
+  // (monospace has no bold), so this never throws and never guesses.
   assert.ok(
-    block.includes('convertFamily(message.text, this._activeFamily)'),
-    'typed text must be converted to the toolbar active family (PRD S7.4 M4.4)'
+    block.includes('nearestSupported('),
+    'typed text must resolve through nearestSupported (PRD S7.4 M4.4, issue #2)'
+  );
+  assert.ok(
+    block.includes('this._activeFamily') && block.includes('this._activeBold')
+      && block.includes('this._activeItalic'),
+    'typing must honour the active family and both latched axes'
   );
 });

@@ -102,13 +102,16 @@
   document.querySelectorAll('.axis-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
       if (btn.disabled) { return; }
+      // With a selection, restyle it. With none, send a COLLAPSED range:
+      // the extension reads that as "latch this axis for typing" (issue #2).
       var offsets = resolveSelectionOffsets();
-      if (!offsets) { return; }
+      var start = offsets ? offsets.start : 0;
+      var end = offsets ? offsets.end : 0;
       vscode.postMessage({
         type: 'toggleAxis',
         axis: btn.dataset.axis,
-        start: offsets.start,
-        end: offsets.end
+        start: start,
+        end: end
       });
     });
   });

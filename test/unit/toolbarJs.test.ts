@@ -222,8 +222,25 @@ test("toolbar.js toggleAxis message posts axis from data attribute with offsets"
   const blockEnd = src.indexOf('});', idx);
   const block = src.slice(blockStart, blockEnd + 3);
   assert.ok(block.includes('axis: btn.dataset.axis'), 'axis must come from btn.dataset.axis');
-  assert.ok(block.includes('start: offsets.start'), 'toggleAxis block must include start');
-  assert.ok(block.includes('end: offsets.end'), 'toggleAxis block must include end');
+  assert.ok(block.includes('start: start'), 'toggleAxis block must include start');
+  assert.ok(block.includes('end: end'), 'toggleAxis block must include end');
+
+  // Issue #2: with no selection the handler sends a COLLAPSED range rather
+  // than bailing out, and the extension reads that as "latch this axis for
+  // typing". Previously it interpolated offsets.start/end directly and
+  // returned early when there was no selection.
+  // Slice from the AXIS handler specifically. ".axis-btn" also appears in the
+  // combined mousedown selector at the top of the file, and starting there
+  // would scan the mark-button handler, which legitimately does bail out.
+  const handler = src.slice(src.indexOf("querySelectorAll('.axis-btn')"), idx);
+  assert.ok(
+    handler.includes('offsets ? offsets.start : 0'),
+    'axis handler must fall back to a collapsed range when nothing is selected'
+  );
+  assert.ok(
+    !handler.includes('if (!offsets) { return; }'),
+    'axis handler must NOT bail out when there is no selection (issue #2)'
+  );
 });
 
 test('toolbar.js axis button handler respects disabled state', () => {
