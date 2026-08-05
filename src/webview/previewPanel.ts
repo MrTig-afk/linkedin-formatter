@@ -6,7 +6,7 @@ import { validateMessage } from '../lib/validateMessage';
 import type { WebviewMessage } from '../lib/messageContract';
 import { toggleStyle, clearAllFormatting, snapToCodePointBoundary } from '../lib/toggleStyle';
 import { convertFamily, toggleAxis, summarizeSelection, effectiveFamily, nearestSupported, FAMILY_IDS, FAMILY_MATRIX, type FamilyId } from '../lib/family';
-import { ALL_STYLES, applyStyle, styleBefore } from '../lib/convert';
+import { ALL_STYLES, applyStyle, styleBefore, styleAfter } from '../lib/convert';
 import { countCharacters, getCounterState, LINKEDIN_POST_LIMIT, type CountingUnit } from '../lib/charCount';
 import { parseGitConfig, initialsOf, type GitIdentity } from '../lib/identity';
 import * as os from 'node:os';
@@ -365,7 +365,17 @@ export class PreviewPanel {
       // start of a document, after plain text, or wherever there is nothing to
       // inherit. Otherwise picking a family would silently re-style text the
       // user is only appending to.
-      const inherited = styleBefore(doc.getText(), message.offset);
+      const full = doc.getText();
+      // Clicking the right half of a styled character yields an offset INSIDE
+      // a surrogate pair. Inserting there would split the character; reading
+      // back from there sees a lone surrogate and detects no style at all.
+      // Snap backward to the start of the character first.
+      const safeOffset = snapToCodePointBoundary(full, message.offset, 'backward');
+
+      // Inherit from the character before the caret; if that is plain (or the
+      // caret is at the very start of a styled run), try the character after,
+      // so clicking at the front of a bold word and typing still gives bold.
+      const inherited = styleBefore(full, safeOffset) ?? styleAfter(full, safeOffset);
       const resolved = nearestSupported(
         this._activeFamily, this._activeBold, this._activeItalic);
       const style = inherited ?? ALL_STYLES.find(s => s.id === resolved.styleIdOrPlain);

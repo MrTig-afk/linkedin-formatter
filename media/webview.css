@@ -644,7 +644,9 @@ body {
   width: 2px;
   height: 1.05em;
   margin: 0 -1px;
-  background: var(--accent);
+  /* Text colour, not the brand accent. A caret is part of the text, and a
+     blue one reads as a UI element sitting in the prose. */
+  background: var(--ink);
   vertical-align: text-bottom;
   user-select: none;
   animation: card-caret-blink 1.06s steps(1, end) infinite;

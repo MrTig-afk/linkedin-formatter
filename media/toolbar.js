@@ -801,4 +801,64 @@
     vscode.postMessage({ type: 'replaceText', start: range.start, end: range.end, text: '' });
     if (e.key === 'Backspace') { caretOffset = range.start; }
   });
+
+  // -------------------------------------------------------------
+  // Arrow-key navigation.
+  //
+  // The card caret is a JS variable, not a real browser caret, so nothing
+  // moves it on its own - focus sits in the hidden input, where arrow keys
+  // just move within an empty field. These move it explicitly.
+  //
+  // Movement is per SPAN, not per code unit, so one press crosses a whole
+  // styled character or emoji rather than landing between its surrogates.
+  // -------------------------------------------------------------
+  function caretLeftOf(offset) {
+    var spans = offsetSpans();
+    var prev = null;
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      if (o >= offset) { break; }
+      prev = o;
+    }
+    return prev;
+  }
+
+  function caretRightOf(offset) {
+    var spans = offsetSpans();
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      if (o > offset) { return o; }
+    }
+    // Past the last span: the end of the document.
+    if (spans.length === 0) { return null; }
+    var last = spans[spans.length - 1];
+    var end = parseInt(last.dataset.offset, 10) + parseInt(last.dataset.len, 10);
+    return end > offset ? end : null;
+  }
+
+  function documentEnd() {
+    var spans = offsetSpans();
+    if (spans.length === 0) { return 0; }
+    var last = spans[spans.length - 1];
+    return parseInt(last.dataset.offset, 10) + parseInt(last.dataset.len, 10);
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (caretOffset === null) { return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) { return; }
+
+    var next = null;
+    if (e.key === 'ArrowLeft')  { next = caretLeftOf(caretOffset); }
+    else if (e.key === 'ArrowRight') { next = caretRightOf(caretOffset); }
+    else if (e.key === 'Home')  { next = 0; }
+    else if (e.key === 'End')   { next = documentEnd(); }
+    else { return; }
+
+    e.preventDefault();
+    // null means there is nowhere to go - already at an edge. Stay put
+    // rather than disarming, so typing still works.
+    if (next === null) { return; }
+    caretOffset = next;
+    drawCardCaret();
+  });
 })();

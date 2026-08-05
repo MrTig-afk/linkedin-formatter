@@ -210,3 +210,20 @@ export function styleBefore(fullText: string, offset: number): Style | null {
   const detected = detectStyle(cp);
   return detected === null ? null : detected.style;
 }
+
+/**
+ * The letterform style of the character immediately AFTER an offset, or null.
+ *
+ * Companion to styleBefore. Typing at the very START of a styled run has
+ * nothing styled behind it, so the run in front is the better guide: clicking
+ * in front of a bold word and typing should continue that word, not start a
+ * plain one in the middle of it.
+ */
+export function styleAfter(fullText: string, offset: number): Style | null {
+  if (offset < 0 || offset >= fullText.length) { return null; }
+  const next = String.fromCodePoint(fullText.codePointAt(offset) ?? 0);
+  const cp = next.codePointAt(0);
+  if (cp === undefined) { return null; }
+  const detected = detectStyle(cp);
+  return detected === null ? null : detected.style;
+}

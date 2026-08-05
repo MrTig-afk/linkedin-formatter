@@ -181,7 +181,7 @@ test('previewPanel resolves typed text through family + latched axes', () => {
     path.resolve(__dirname, '..', '..', '..', 'src', 'webview', 'previewPanel.ts'), 'utf-8');
   const idx = src.indexOf("message.type === 'insertText'");
   assert.ok(idx !== -1, "insertText handler not found");
-  const block = src.slice(idx, idx + 1200);
+  const block = src.slice(idx, idx + 2200);   // widened: the handler grew
   // Issue #2: typing resolves the active family AND the latched axes.
   // nearestSupported cascades when the family cannot express the intent
   // (monospace has no bold), so this never throws and never guesses.
