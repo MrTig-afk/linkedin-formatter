@@ -497,18 +497,24 @@ export class PreviewPanel {
     if (message.type === 'setCaret') {
       // Cheap and frequent: no edit, no render, just the truth about where
       // the caret is so the next insert lands in the right place.
+      const caretMoved = this._cardCaret !== message.offset;
       this._cardCaret = message.offset;
       this._cardCaretAssoc = message.assoc ?? 'after';
       this._lastTypedBoundary = true;   // caret moved: next insert starts a new undo unit
       // A collapsed caret ends any selection; without this the next render
       // would repaint a selection the user has already clicked away.
       this._restoreSelection = null;
-      // Moving the caret drops any pending Ctrl+B/I or dropdown family, as
-      // a word processor does. (The render echo does not pass through here,
-      // so a pending format survives an actual typing run.)
-      this._pendingBold = null;
-      this._pendingItalic = null;
-      this._pendingFamily = null;
+      // MOVING the caret drops any pending Ctrl+B/I or dropdown family, as
+      // a word processor does. A click on the SAME spot keeps them: picking
+      // a family steals focus into the dropdown, so the user has to click
+      // back into the card before typing - and that click must not eat the
+      // very latch they just set. (The render echo does not pass through
+      // here, so a pending format survives an actual typing run.)
+      if (caretMoved) {
+        this._pendingBold = null;
+        this._pendingItalic = null;
+        this._pendingFamily = null;
+      }
       return;
     }
 

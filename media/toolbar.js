@@ -187,6 +187,11 @@
         });
       } else {
         vscode.postMessage({ type: 'setFamily', family: family });
+        // The pick stole focus into the dropdown. Hand it straight back to
+        // the catcher so pick-then-type works without a re-click.
+        if (typeCatcher && caretOffset !== null) {
+          typeCatcher.focus({ preventScroll: true });
+        }
       }
     });
 
