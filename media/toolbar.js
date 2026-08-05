@@ -847,8 +847,9 @@
       else { btn.classList.remove('active'); }
     }
 
-    // S/U light up when the whole selection already carries the mark,
-    // exactly like the bold button does for its axis.
+    // S/U light up when the whole selection already carries the mark, and
+    // disable when the selection's family cannot render marks at all
+    // (enclosed glyphs) - exactly like the bold button does for its axis.
     var markPairs = [
       ['strikethrough', t.strikethrough === true],
       ['underline', t.underline === true],
@@ -856,7 +857,8 @@
     for (var j = 0; j < markPairs.length; j++) {
       var mb = document.querySelector('.mark-btn[data-style-id="' + markPairs[j][0] + '"]');
       if (!mb) { continue; }
-      if (markPairs[j][1]) { mb.classList.add('active'); }
+      mb.disabled = t.marksAvailable === false;
+      if (markPairs[j][1] && !mb.disabled) { mb.classList.add('active'); }
       else { mb.classList.remove('active'); }
     }
   }

@@ -476,7 +476,7 @@ export class PreviewPanel {
       // HTML for nothing flashes the pane and costs the perceived speed.
       const { displayFamily, axisState } = this.toolbarStateFor(doc.getText());
       const marks = this.selectionMarksFor(doc.getText());
-      const key = `${displayFamily}|${JSON.stringify(axisState)}|${marks.strikethrough}|${marks.underline}`;
+      const key = `${displayFamily}|${JSON.stringify(axisState)}|${JSON.stringify(marks)}`;
       if (key !== this._lastToolbarKey) {
         this.update(doc);
       }
@@ -747,7 +747,7 @@ export class PreviewPanel {
     const { displayFamily, axisState } = this.toolbarStateFor(text);
     const selMarks = this.selectionMarksFor(text);
     this._lastToolbarKey =
-      `${displayFamily}|${JSON.stringify(axisState)}|${selMarks.strikethrough}|${selMarks.underline}`;
+      `${displayFamily}|${JSON.stringify(axisState)}|${JSON.stringify(selMarks)}`;
 
     // Identity: explicit settings win, then the git identity that signs
     // this machine's commits, then neutral placeholders.
@@ -798,6 +798,7 @@ export class PreviewPanel {
           italicAvailable: axisState?.italicAvailable ?? true,
           strikethrough: selMarks.strikethrough,
           underline: selMarks.underline,
+          marksAvailable: selMarks.available,
         },
       });
       return;
@@ -831,20 +832,36 @@ export class PreviewPanel {
    * stripping the mark removes something AND re-marking the stripped text
    * restores the original length (one mark per markable grapheme).
    */
-  private selectionMarksFor(text: string): { strikethrough: boolean; underline: boolean } {
+  private selectionMarksFor(text: string): {
+    strikethrough: boolean; underline: boolean; available: boolean;
+  } {
     if (!this._restoreSelection || this._restoreSelection.end > text.length) {
-      return { strikethrough: false, underline: false };
+      return { strikethrough: false, underline: false, available: true };
     }
     const sel = text.substring(
       snapToCodePointBoundary(text, this._restoreSelection.start, 'backward'),
       snapToCodePointBoundary(text, this._restoreSelection.end, 'forward'),
     );
-    if (sel.length === 0) { return { strikethrough: false, underline: false }; }
+    if (sel.length === 0) {
+      return { strikethrough: false, underline: false, available: true };
+    }
     const has = (mark: CombiningMark): boolean => {
       const stripped = stripCombiningMark(sel, mark);
       return stripped !== sel && applyCombiningMark(stripped, mark).length === sel.length;
     };
-    return { strikethrough: has(STRIKETHROUGH), underline: has(UNDERLINE) };
+    // Combining marks over the enclosed families render as tofu boxes (or
+    // not at all) on every major platform, including LinkedIn's own feed -
+    // no font carries mark attachment for boxed/circled glyphs. Same
+    // pattern as bold-unavailable-for-squared: offer only what can render.
+    const ENCLOSED: ReadonlySet<string> = new Set([
+      'squared', 'negative-squared', 'circled', 'parenthesized', 'fullwidth',
+    ]);
+    const family = summarizeSelection(sel).family;
+    return {
+      strikethrough: has(STRIKETHROUGH),
+      underline: has(UNDERLINE),
+      available: family === null || !ENCLOSED.has(family),
+    };
   }
 
   private toolbarStateFor(text: string): {
