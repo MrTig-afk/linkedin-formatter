@@ -25,3 +25,8 @@ venv/**
 
 # the github-facing readme; the listing uses README.marketplace.md via --readme-path
 README.md
+
+# Internal working material - never in the package
+project_summary.txt
+cli/**
+mcp/**
