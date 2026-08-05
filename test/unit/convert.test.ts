@@ -7,7 +7,6 @@ import {
   removeStyle,
   detectStyle,
   detectFormatting,
-  styleTypedText,
 } from '../../src/lib/convert';
 import type { DetectedFormat } from '../../src/lib/convert';
 import { MATH_STYLE_BY_ID } from '../../src/lib/styles';
@@ -333,63 +332,4 @@ test('detectFormatting italic h exception 0x210E with underline mark: style ital
   assert.equal(entries[0].marks.length, 1);
   assert.equal(entries[0].marks[0], UNDERLINE);
   assert.equal(entries[0].plain, 'h');
-});
-
-// ---------------------------------------------------------------------------
-// styleTypedText (M4.4, PRD S7.4): typed text continues the run it lands in
-// ---------------------------------------------------------------------------
-
-test('styleTypedText: plain context leaves the typed text plain', () => {
-  assert.equal(styleTypedText('hello', 5, 'x'), 'x');
-});
-
-test('styleTypedText: at offset 0 there is no context, so text is unchanged', () => {
-  assert.equal(styleTypedText('hello', 0, 'x'), 'x');
-});
-
-test('styleTypedText: empty typed text is returned unchanged', () => {
-  assert.equal(styleTypedText('hello', 3, ''), '');
-});
-
-test('styleTypedText: typing after bold continues bold', () => {
-  const bold = applyStyle('AB', MATH_STYLE_BY_ID.get('bold')!);
-  const typed = styleTypedText(bold, bold.length, 'C');
-  assert.equal(typed, applyStyle('C', MATH_STYLE_BY_ID.get('bold')!));
-});
-
-test('styleTypedText: typing after italic continues italic', () => {
-  const italic = applyStyle('xy', MATH_STYLE_BY_ID.get('italic')!);
-  const typed = styleTypedText(italic, italic.length, 'z');
-  assert.equal(typed, applyStyle('z', MATH_STYLE_BY_ID.get('italic')!));
-});
-
-test('styleTypedText: reads a whole surrogate pair as the preceding character', () => {
-  // The preceding styled char is astral (2 code units). Reading only one unit
-  // back would see a lone surrogate and detect no style.
-  const bold = applyStyle('Q', MATH_STYLE_BY_ID.get('bold')!);
-  assert.equal(bold.length, 2, 'precondition: math bold is astral');
-  const typed = styleTypedText(bold, bold.length, 'R');
-  assert.equal(typed, applyStyle('R', MATH_STYLE_BY_ID.get('bold')!));
-});
-
-test('styleTypedText: inherits from the character before the OFFSET, not the end', () => {
-  const bold = applyStyle('AB', MATH_STYLE_BY_ID.get('bold')!);
-  const doc = bold + 'plain';
-  // Inserting right after the bold run continues bold...
-  assert.equal(styleTypedText(doc, bold.length, 'C'),
-               applyStyle('C', MATH_STYLE_BY_ID.get('bold')!));
-  // ...but inserting at the very end, after plain text, stays plain.
-  assert.equal(styleTypedText(doc, doc.length, 'C'), 'C');
-});
-
-test('styleTypedText: fails closed on a character with no styled equivalent', () => {
-  // applyStyle leaves unmappable characters alone rather than guessing.
-  const bold = applyStyle('A', MATH_STYLE_BY_ID.get('bold')!);
-  assert.equal(styleTypedText(bold, bold.length, '!'), '!');
-});
-
-test('styleTypedText: multi-character input all inherits', () => {
-  const bold = applyStyle('A', MATH_STYLE_BY_ID.get('bold')!);
-  assert.equal(styleTypedText(bold, bold.length, 'xy'),
-               applyStyle('xy', MATH_STYLE_BY_ID.get('bold')!));
 });

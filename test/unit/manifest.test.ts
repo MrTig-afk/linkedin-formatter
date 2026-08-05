@@ -171,3 +171,19 @@ test('cardTheme defaults to editor (owner pick, 2026-08-04)', () => {
   assert.strictEqual(prop.default, 'editor');
   assert.deepStrictEqual(prop.enum, ['daylight', 'midnight', 'dim', 'editor']);
 });
+
+// ---------------------------------------------------------------------------
+// M4.4 wiring: typed text takes the active family, not the surrounding style
+// ---------------------------------------------------------------------------
+
+test('previewPanel converts typed text to the active family', () => {
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '..', '..', '..', 'src', 'webview', 'previewPanel.ts'), 'utf-8');
+  const idx = src.indexOf("message.type === 'insertText'");
+  assert.ok(idx !== -1, "insertText handler not found");
+  const block = src.slice(idx, idx + 1200);
+  assert.ok(
+    block.includes('convertFamily(message.text, this._activeFamily)'),
+    'typed text must be converted to the toolbar active family (PRD S7.4 M4.4)'
+  );
+});
