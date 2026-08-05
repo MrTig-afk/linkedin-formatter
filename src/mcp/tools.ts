@@ -173,10 +173,25 @@ export const TOOL_NAMES: ReadonlySet<string> = new Set(TOOL_DEFS.map(d => d.name
 export interface ToolResult {
   readonly text: string;
   readonly isError: boolean;
+  /**
+   * Commentary for the model, kept OUT of the data. It used to be appended
+   * to the converted text itself, which meant a model piping apply_family
+   * output onward counted and stripped the note along with the text - and
+   * could paste it into the post. The transport renders it as a separate
+   * content block instead.
+   */
+  readonly note?: string;
 }
 
-const ok = (text: string): ToolResult => ({ text, isError: false });
+const ok = (text: string, note?: string): ToolResult => ({ text, isError: false, ...(note !== undefined ? { note } : {}) });
 const fail = (text: string): ToolResult => ({ text, isError: true });
+
+/**
+ * Upper bound on tool text. A LinkedIn post is 3,000 characters; 100k is two
+ * orders of magnitude of headroom. Refused rather than truncated - a silently
+ * shortened post is worse than a rejected call.
+ */
+const MAX_TOOL_TEXT_LENGTH = 100_000;
 
 function requireString(args: Record<string, unknown>, key: string): string | null {
   const v = args[key];
@@ -215,6 +230,9 @@ export function callTool(name: string, rawArgs: unknown): ToolResult {
 
   const text = requireString(args, 'text');
   if (text === null) { return fail('text is required and must be a string'); }
+  if (text.length > MAX_TOOL_TEXT_LENGTH) {
+    return fail('text exceeds ' + MAX_TOOL_TEXT_LENGTH + ' UTF-16 units; split the input');
+  }
 
   if (name === 'apply_style') {
     const styleId = requireString(args, 'style_id');
@@ -243,10 +261,14 @@ export function callTool(name: string, rawArgs: unknown): ToolResult {
     const dropped: string[] = [];
     if (wantBold && !resolved.bold) { dropped.push('bold'); }
     if (wantItalic && !resolved.italic) { dropped.push('italic'); }
+    // The note must NOT contaminate the converted text: models pipe tool
+    // output onwards, and a note fused into the data gets counted by
+    // count_characters, mangled by strip_formatting, or pasted straight
+    // into the post. It travels in a separate content block instead.
     const note = dropped.length > 0
-      ? `\n\n(note: ${family} has no ${dropped.join(' or ')} in Unicode; dropped)`
-      : '';
-    return ok(out + note);
+      ? family + ' has no ' + dropped.join(' or ') + ' in Unicode; that axis was dropped.'
+      : undefined;
+    return ok(out, note);
   }
 
   if (name === 'apply_mark') {
@@ -257,7 +279,10 @@ export function callTool(name: string, rawArgs: unknown): ToolResult {
       const ids = COMBINING_MARKS.map(m => m.id).join(' | ');
       return fail(`unknown mark_id "${markId}". Valid: ${ids}`);
     }
-    return ok(applyCombiningMark(text, mark));
+    // Strip first so the call is idempotent. Models retry tools; a bare
+    // re-apply DOUBLED the combining marks on every retry (verified:
+    // two calls on "ab" gave 6 units instead of 4).
+    return ok(applyCombiningMark(stripCombiningMark(text, mark), mark));
   }
 
   if (name === 'strip_formatting') {

@@ -57,10 +57,14 @@ test('mcp: apply_family with no axes gives the regular face', () => {
   assert.equal(r.text, applyStyle('Hi', ALL_STYLES.find(s => s.id === 'script')!));
 });
 
-test('mcp: apply_family reports a dropped axis instead of silently faking it', () => {
+test('mcp: apply_family reports a dropped axis WITHOUT contaminating the text', () => {
   const r = callTool('apply_family', { text: 'Hi', family: 'monospace', bold: true });
   assert.equal(r.isError, false);
-  assert.ok(/no bold/.test(r.text), 'the model must be told the axis was dropped');
+  assert.ok(r.note !== undefined && /no bold/.test(r.note), 'the note must exist');
+  // The data stays pure: piping it onwards must not carry commentary.
+  assert.ok(!/note|bold/.test(r.text), 'the converted text must contain no commentary');
+  assert.equal(callTool('strip_formatting', { text: r.text }).text, 'Hi',
+    'round-trip through the CLEAN text must still work');
 });
 
 test('mcp: strip_formatting round-trips every family', () => {
@@ -135,4 +139,19 @@ test('mcp: an unknown tool name is an error, not a throw', () => {
 
 test('mcp: an invalid counting unit is rejected rather than defaulted', () => {
   assert.equal(callTool('count_characters', { text: 'Hi', unit: 'bytes' }).isError, true);
+});
+
+test('mcp: apply_mark is idempotent - a model retry cannot double the marks', () => {
+  const once = callTool('apply_mark', { text: 'ab', mark_id: 'strikethrough' }).text;
+  const twice = callTool('apply_mark', { text: once, mark_id: 'strikethrough' }).text;
+  assert.equal(twice, once, 'second application must be a no-op');
+});
+
+test('mcp: oversized text is refused, never truncated', () => {
+  const huge = 'a'.repeat(100_001);
+  const r = callTool('strip_formatting', { text: huge });
+  assert.equal(r.isError, true);
+  assert.ok(/exceeds/.test(r.text));
+  assert.equal(callTool('strip_formatting', { text: 'a'.repeat(100_000) }).isError, false,
+    'exactly at the limit is allowed');
 });

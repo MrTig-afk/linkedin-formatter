@@ -94,8 +94,11 @@ function check(name, pass, detail) {
 
     const drop = await send('tools/call', {
       name: 'apply_family', arguments: { text: 'Hi', family: 'monospace', bold: true } });
-    check('a dropped axis is reported to the model',
-      /no bold/.test(drop.result?.content?.[0]?.text || ''));
+    check('a dropped axis is reported in a SEPARATE content block',
+      /no bold/.test(drop.result?.content?.[1]?.text || ''));
+    check('the converted text itself stays free of commentary',
+      !/note|bold/.test(drop.result?.content?.[0]?.text || ''),
+      drop.result?.content?.[0]?.text);
 
     // 4. Bad input from a model must be a tool error, not a crash.
     const bad = await send('tools/call', {
@@ -132,6 +135,14 @@ function check(name, pass, detail) {
 
     const stillAlive = await send('tools/list', {});
     check('server survives a protocol error', (stillAlive.result?.tools ?? []).length === 7);
+
+    // Version skew guard: the VERSION constant in index.ts drifts from the
+    // package version silently otherwise.
+    const pkgVersion = JSON.parse(require('fs').readFileSync(
+      path.join(ROOT, 'mcp', 'package.json'), 'utf8')).version;
+    check('serverInfo.version matches mcp/package.json',
+      init.result?.serverInfo?.version === pkgVersion,
+      init.result?.serverInfo?.version + ' vs ' + pkgVersion);
 
     check('nothing was written to stderr', stderr === '', stderr.slice(0, 120));
   } catch (err) {

@@ -57,7 +57,14 @@ server.setRequestHandler(CallToolRequestSchema, (request) => {
 
   const result = callTool(request.params.name, request.params.arguments);
   return {
-    content: [{ type: 'text' as const, text: result.text }],
+    content: [
+      { type: 'text' as const, text: result.text },
+      // Commentary rides in its own block so the first block stays pure
+      // data a model can pipe onwards.
+      ...(result.note !== undefined
+        ? [{ type: 'text' as const, text: 'note: ' + result.note }]
+        : []),
+    ],
     isError: result.isError,
   };
 });

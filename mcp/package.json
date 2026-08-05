@@ -10,11 +10,25 @@
     "directory": "mcp"
   },
   "homepage": "https://github.com/MrTig-afk/linkedin-formatter",
-  "keywords": ["mcp", "model-context-protocol", "linkedin", "unicode", "formatting"],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "linkedin",
+    "unicode",
+    "formatting"
+  ],
   "bin": {
     "linkedin-formatter-mcp": "dist/linkedin-formatter-mcp.js"
   },
-  "files": ["dist/linkedin-formatter-mcp.js", "README.md"],
-  "engines": { "node": ">=18" },
-  "private": true
+  "files": [
+    "dist/linkedin-formatter-mcp.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true,
+  "scripts": {
+    "prepublishOnly": "node ../mcp-build.js"
+  }
 }
