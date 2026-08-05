@@ -481,9 +481,22 @@ export class PreviewPanel {
       // one Ctrl+Z undoes the whole thing rather than half of it.
       const range = new vscode.Range(
         doc.positionAt(message.start), doc.positionAt(message.end));
+      // A non-empty replacement is typing-over-a-selection: style it exactly
+      // as typing would be styled at that spot, so the character that lands
+      // matches the run it replaces. Empty stays a pure deletion. Either way
+      // it is ONE edit, so one Ctrl+Z restores the whole selection.
+      const replacement = message.text.length === 0
+        ? message.text
+        : (() => {
+            const styleId = resolveTypingStyle(
+              doc.getText(), message.start,
+              this._pendingBold, this._pendingItalic, this._activeFamily);
+            const st = ALL_STYLES.find(x => x.id === styleId);
+            return st === undefined ? message.text : applyStyle(message.text, st);
+          })();
       const edit = new vscode.WorkspaceEdit();
-      edit.replace(doc.uri, range, message.text);
-      this._cardCaret = message.start + message.text.length;
+      edit.replace(doc.uri, range, replacement);
+      this._cardCaret = message.start + replacement.length;
       this._cardCaretAssoc = 'after';
       this._selfEditsInFlight += 1;
       vscode.workspace.applyEdit(edit).then(

@@ -40,6 +40,11 @@
   // Returns { start: number, end: number } or null.
   // ---------------------------------------------------------------
   function resolveSelectionOffsets() {
+    // The keyboard selection wins when active: it is precise, and the
+    // native selection cannot exist at the same time (focus is in the
+    // hidden input while the keyboard model is in use).
+    var kbd = kbdSelection();
+    if (kbd !== null) { return kbd; }
     var sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) { return null; }
 
@@ -600,13 +605,68 @@
    */
   var caretAssoc = 'after';
 
+
+  // -------------------------------------------------------------
+  // Keyboard selection.
+  //
+  // Native DOM selection covers the mouse; it cannot cover the keyboard,
+  // because focus lives in the hidden input while typing and the browser
+  // will not extend a selection in an element that does not have focus.
+  // So Shift+movement maintains its own {anchor, head} pair - the anchor
+  // fixed where the selection began, the head being caretOffset - and the
+  // highlight is painted by toggling a class on the offset spans. No
+  // innerHTML, and the paint survives nothing: any render clears it,
+  // because new spans mean the painted ones are gone anyway.
+  // -------------------------------------------------------------
+  var selAnchor = null;
+
+  function kbdSelection() {
+    if (selAnchor === null || caretOffset === null) { return null; }
+    if (selAnchor === caretOffset) { return null; }
+    return {
+      start: Math.min(selAnchor, caretOffset),
+      end: Math.max(selAnchor, caretOffset)
+    };
+  }
+
+  function paintKbdSelection() {
+    var sel = kbdSelection();
+    var spans = offsetSpans();
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      var on = sel !== null && o >= sel.start && o < sel.end;
+      if (on) { spans[i].classList.add('kbd-selected'); }
+      else { spans[i].classList.remove('kbd-selected'); }
+    }
+  }
+
+  function collapseKbdSelection() {
+    selAnchor = null;
+    paintKbdSelection();
+  }
+
   function setCaret(offset, assoc) {
+    // A plain move ends any keyboard selection; extending moves go through
+    // extendTo instead, which preserves the anchor around this call.
+    var keepAnchor = setCaret._extending === true;
+    if (!keepAnchor) { selAnchor = null; }
     caretOffset = offset;
     caretAssoc = assoc || 'after';
     drawCardCaret();
     if (offset !== null) {
       vscode.postMessage({ type: 'setCaret', offset: offset, assoc: caretAssoc });
     }
+    paintKbdSelection();
+  }
+
+  /** Move the head while keeping the anchor: the Shift+movement path. */
+  function extendTo(offset, assoc) {
+    if (offset === null || caretOffset === null) { return true; }
+    if (selAnchor === null) { selAnchor = caretOffset; }
+    setCaret._extending = true;
+    setCaret(offset, assoc);
+    setCaret._extending = false;
+    return true;
   }
 
   /** Disarm typing AND tell the extension, so it cannot keep a stale caret
@@ -848,6 +908,10 @@
     }
 
     applyToolbar(payload.toolbar);
+
+    // New spans: the painted selection is on dead nodes, and after any
+    // edit the old offsets are stale anyway. Consume it.
+    selAnchor = null;
 
     // replaceChildren wiped the caret along with the old spans; put it back
     // at whatever offset is armed now.
@@ -1237,6 +1301,56 @@
 
   function toggleBoldKey()   { return toggleAxisKey('bold'); }
   function toggleItalicKey() { return toggleAxisKey('italic'); }
+
+  // --- selection commands ---
+
+  function selCharLeft()  { return extendTo(caretLeftOf(caretOffset), 'after'); }
+  function selCharRight() { return extendTo(caretRightOf(caretOffset), 'after'); }
+  function selLineUp()    { return extendTo(moveVertical('up'), 'after'); }
+  function selLineDown()  { return extendTo(moveVertical('down'), 'after'); }
+  function selLineStart() { return extendTo(lineBoundary('start'), 'after'); }
+  function selLineEnd()   { return extendTo(lineBoundary('end'), 'before'); }
+  function selDocStart()  { return extendTo(0, 'after'); }
+  function selDocEnd()    { return extendTo(documentEnd(), 'before'); }
+  function selWordLeft()  {
+    if (caretOffset === null) { return false; }
+    return extendTo(wordStartBefore(caretOffset), 'after');
+  }
+  function selWordRight() {
+    if (caretOffset === null) { return false; }
+    return extendTo(IS_MAC ? wordEndAfter(caretOffset) : wordStartAfter(caretOffset), 'after');
+  }
+
+  function selectAllCard() {
+    var end = documentEnd();
+    if (end === 0) { return true; }
+    selAnchor = 0;
+    setCaret._extending = true;
+    setCaret(end, 'before');
+    setCaret._extending = false;
+    return true;
+  }
+
+  function collapseSelectionKey() {
+    if (kbdSelection() === null) { return false; }   // nothing to do; let Escape bubble
+    collapseKbdSelection();
+    return true;
+  }
+
+  /**
+   * Plain arrows with an active selection COLLAPSE to the directional end
+   * and do not also move - the convention every editor follows, and getting
+   * it wrong reads as "the arrow keys eat a character".
+   */
+  function collapseOr(direction, fallthrough) {
+    var sel = kbdSelection();
+    if (sel === null) { return fallthrough(); }
+    var target = direction === 'start' ? sel.start : sel.end;
+    var assoc = direction === 'start' ? 'after' : 'before';
+    setCaret(target, assoc);   // plain setCaret drops the anchor
+    return true;
+  }
+
   // ---------------------------------------------------------------
   // The keymap.
   //
@@ -1290,8 +1404,8 @@
     { key: 'Mod-Shift-z',      run: sendRedo },
 
     // Caret motion
-    { key: 'ArrowLeft',        run: moveCharLeft },
-    { key: 'ArrowRight',       run: moveCharRight },
+    { key: 'ArrowLeft',        run: function () { return collapseOr('start', moveCharLeft); } },
+    { key: 'ArrowRight',       run: function () { return collapseOr('end', moveCharRight); } },
     { key: 'ArrowUp',          run: moveLineUp },
     { key: 'ArrowDown',        run: moveLineDown },
     // Home/End go to the VISUAL line, which is what every editor does and
@@ -1309,6 +1423,20 @@
     // Formatting, finally honouring what the toolbar tooltips promise.
     { key: 'Mod-b',            run: toggleBoldKey },
     { key: 'Mod-i',            run: toggleItalicKey },
+
+    // Selection: Shift + every motion above, plus select-all and Escape.
+    { key: 'Shift-ArrowLeft',  run: selCharLeft },
+    { key: 'Shift-ArrowRight', run: selCharRight },
+    { key: 'Shift-ArrowUp',    run: selLineUp },
+    { key: 'Shift-ArrowDown',  run: selLineDown },
+    { key: 'Shift-Home',       mac: 'Meta-Shift-ArrowLeft',  run: selLineStart },
+    { key: 'Shift-End',        mac: 'Meta-Shift-ArrowRight', run: selLineEnd },
+    { key: 'Mod-Shift-Home',   mac: 'Meta-Shift-ArrowUp',    run: selDocStart },
+    { key: 'Mod-Shift-End',    mac: 'Meta-Shift-ArrowDown',  run: selDocEnd },
+    { key: 'Mod-Shift-ArrowLeft',  mac: 'Alt-Shift-ArrowLeft',  run: selWordLeft },
+    { key: 'Mod-Shift-ArrowRight', mac: 'Alt-Shift-ArrowRight', run: selWordRight },
+    { key: 'Mod-a',            run: selectAllCard },
+    { key: 'Escape',           run: collapseSelectionKey },
   ];
 
   var KEYMAP = (function () {
@@ -1333,6 +1461,36 @@
   document.addEventListener('keydown', function (e) {
     // Never fight an active IME: mutating the DOM mid-composition aborts it.
     if (e.isComposing || e.keyCode === 229) { return; }
+
+    // Typing over a selection (issue #1). A printable key (or Enter) with
+    // an active selection replaces it in ONE edit - the extension styles
+    // the replacement to match the spot, and one Ctrl+Z restores the lot.
+    // Handled on keydown so focus never moves and the toolbar selection
+    // flow is untouched. Known limit, documented on the issue: the first
+    // character of an IME composition cannot arrive this way; composed
+    // input replaces nothing and simply inserts after the user deletes.
+    if (!e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key.length === 1 || e.key === 'Enter')) {
+      var typeOverSel = resolveSelectionOffsets();
+      if (typeOverSel !== null && typeOverSel.start !== typeOverSel.end) {
+        e.preventDefault();
+        vscode.postMessage({
+          type: 'replaceText',
+          start: typeOverSel.start,
+          end: typeOverSel.end,
+          text: e.key === 'Enter' ? '\n' : e.key
+        });
+        collapseKbdSelection();
+        var native = window.getSelection();
+        if (native && !native.isCollapsed) { native.removeAllRanges(); }
+        // The extension advances the caret past the styled replacement and
+        // echoes it; arm locally at the start so fast follow-up keys land
+        // in order rather than being dropped.
+        caretOffset = typeOverSel.start;
+        typeCatcher.focus({ preventScroll: true });
+        return;
+      }
+    }
     var run = KEYMAP[chordOf(e)];
     if (!run) { return; }
     if (run() !== false) { e.preventDefault(); }

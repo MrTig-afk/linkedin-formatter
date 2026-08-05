@@ -666,3 +666,12 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .card-caret { animation: none; opacity: 1; }
 }
+
+/* --- Keyboard selection (feat/keyboard-selection) ---
+
+   Painted by toggling this class on offset spans, because the native
+   selection cannot extend while focus sits in the hidden input. Same colour
+   as ::selection so mouse and keyboard selections are indistinguishable. */
+span.kbd-selected {
+  background: var(--selection);
+}
