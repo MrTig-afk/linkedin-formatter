@@ -388,8 +388,9 @@ body {
   background: var(--active);
 }
 
-/* Pressed state: the selection uniformly carries this axis. */
-.axis-btn.active {
+/* Pressed state: the selection uniformly carries this axis or mark. */
+.axis-btn.active,
+.mark-btn.active {
   background: var(--accent-soft);
   color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent-ring);
@@ -697,7 +698,10 @@ span.kbd-selected {
 @font-face {
   font-family: "Enclosed Alphanumerics Text";
   src: local("Segoe UI Symbol");
+  /* Enclosed alphanumerics ONLY - the blocks emoji fonts try to claim.
+     Fullwidth (U+FF10-FF5A) must NOT be here: Segoe UI Symbol has no
+     fullwidth glyphs, so routing it here turned any fullwidth character
+     carrying a combining mark into an all-tofu cluster ("empty boxes"). */
   unicode-range: U+2460-24EA, U+2474-247C, U+249C-24B5,
-                 U+FF10-FF19, U+FF21-FF3A, U+FF41-FF5A,
                  U+1F130-1F149, U+1F170-1F189;
 }

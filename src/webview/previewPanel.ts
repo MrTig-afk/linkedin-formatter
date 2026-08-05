@@ -7,6 +7,7 @@ import type { WebviewMessage } from '../lib/messageContract';
 import { toggleStyle, clearAllFormatting, snapToCodePointBoundary } from '../lib/toggleStyle';
 import { convertFamily, toggleAxis, summarizeSelection, effectiveFamily, decompose, resolveTypingStyle, FAMILY_IDS, FAMILY_MATRIX, type FamilyId } from '../lib/family';
 import { ALL_STYLES, applyStyleForTyping } from '../lib/convert';
+import { STRIKETHROUGH, UNDERLINE, applyCombiningMark, stripCombiningMark, type CombiningMark } from '../lib/combining';
 import { countCharacters, getCounterState, LINKEDIN_POST_LIMIT, type CountingUnit } from '../lib/charCount';
 import { parseGitConfig, initialsOf, type GitIdentity } from '../lib/identity';
 import * as os from 'node:os';
@@ -474,7 +475,8 @@ export class PreviewPanel {
       // The selection itself is already live in the webview; swapping the
       // HTML for nothing flashes the pane and costs the perceived speed.
       const { displayFamily, axisState } = this.toolbarStateFor(doc.getText());
-      const key = `${displayFamily}|${JSON.stringify(axisState)}`;
+      const marks = this.selectionMarksFor(doc.getText());
+      const key = `${displayFamily}|${JSON.stringify(axisState)}|${marks.strikethrough}|${marks.underline}`;
       if (key !== this._lastToolbarKey) {
         this.update(doc);
       }
@@ -743,7 +745,9 @@ export class PreviewPanel {
     // (when uniform) and the axis buttons show pressed state, so what is
     // highlighted always matches what a click would toggle.
     const { displayFamily, axisState } = this.toolbarStateFor(text);
-    this._lastToolbarKey = `${displayFamily}|${JSON.stringify(axisState)}`;
+    const selMarks = this.selectionMarksFor(text);
+    this._lastToolbarKey =
+      `${displayFamily}|${JSON.stringify(axisState)}|${selMarks.strikethrough}|${selMarks.underline}`;
 
     // Identity: explicit settings win, then the git identity that signs
     // this machine's commits, then neutral placeholders.
@@ -792,6 +796,8 @@ export class PreviewPanel {
           italic: axisState?.italic ?? false,
           boldAvailable: axisState?.boldAvailable ?? true,
           italicAvailable: axisState?.italicAvailable ?? true,
+          strikethrough: selMarks.strikethrough,
+          underline: selMarks.underline,
         },
       });
       return;
@@ -817,6 +823,28 @@ export class PreviewPanel {
       axisState,
       { theme, profileName, profileHeadline, initials },
     );
+  }
+
+  /**
+   * Whether the current selection uniformly carries each combining mark,
+   * for the S/U button pressed-state. "Fully marked" is order-insensitive:
+   * stripping the mark removes something AND re-marking the stripped text
+   * restores the original length (one mark per markable grapheme).
+   */
+  private selectionMarksFor(text: string): { strikethrough: boolean; underline: boolean } {
+    if (!this._restoreSelection || this._restoreSelection.end > text.length) {
+      return { strikethrough: false, underline: false };
+    }
+    const sel = text.substring(
+      snapToCodePointBoundary(text, this._restoreSelection.start, 'backward'),
+      snapToCodePointBoundary(text, this._restoreSelection.end, 'forward'),
+    );
+    if (sel.length === 0) { return { strikethrough: false, underline: false }; }
+    const has = (mark: CombiningMark): boolean => {
+      const stripped = stripCombiningMark(sel, mark);
+      return stripped !== sel && applyCombiningMark(stripped, mark).length === sel.length;
+    };
+    return { strikethrough: has(STRIKETHROUGH), underline: has(UNDERLINE) };
   }
 
   private toolbarStateFor(text: string): {
