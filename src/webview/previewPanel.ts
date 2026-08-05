@@ -144,21 +144,6 @@ export class PreviewPanel {
    */
   private _lastTypedAt = 0;
   private _lastTypedBoundary = true;
-  /**
-   * Diagnostics for the caret investigation (branch-only, not shipped).
-   * Every caret-relevant event lands here with a timestamp, so a repro of
-   * "typing jumped lines" turns into a readable trace instead of a guess.
-   * View > Output > "LinkedIn Formatter Diag".
-   */
-  private readonly _diag = vscode.window.createOutputChannel('LinkedIn Formatter Diag');
-
-  private log(event: string): void {
-    const t = String(Date.now() % 1_000_000).padStart(6, '0');
-    this._diag.appendLine(
-      `${t} ${event} | caret=${this._cardCaret} assoc=${this._cardCaretAssoc}`
-      + ` pending=${this._pendingBold}/${this._pendingItalic}`
-      + ` selfEdits=${this._selfEditsInFlight} history=${this._historyInFlight}`);
-  }
   /** Toolbar state (family|bold|italic) as of the last render. */
   private _lastToolbarKey = '';
   /** ~/.gitconfig identity, read once per panel; nulls when unavailable. */
@@ -299,10 +284,8 @@ export class PreviewPanel {
       // for nothing.
       if (event.contentChanges.length === 0) { return; }
       if (this._selfEditsInFlight > 0) {
-        this.log('docChange classified SELF');
         this._selfEditsInFlight--;
       } else if (this._historyInFlight) {
-        this.log('docChange classified HISTORY');
         this._lastTypedBoundary = true;
         // Jump the card caret TO the undone/redone edit, the way Word and
         // VS Code do. Merely rebasing kept the caret frozen in place while
@@ -322,7 +305,6 @@ export class PreviewPanel {
         // card, so the card must stay armed. The caret is recomputed from
         // the editor once the command resolves.
       } else {
-        this.log('docChange classified EXTERNAL - caret nulled');
         // External change (typing, undo): the stored offsets are stale.
         this._restoreSelection = null;
         this._pendingExternal = true;
@@ -343,14 +325,12 @@ export class PreviewPanel {
       // traffic doubling after any cursorSync. Skip when the editor is not
       // the active one.
       if (vscode.window.activeTextEditor !== event.textEditor) { return; }
-      this.log('editor selection changed -> update()');
       const offset = event.textEditor.document.offsetAt(event.selections[0].active);
       if (offset === this._lastCaretOffset) { return; }
       this.update(event.textEditor.document);
     }, null, this._disposables);
 
     this._panel.webview.onDidReceiveMessage((raw: unknown) => {
-      this.log(`rx ${JSON.stringify(raw).slice(0, 120)}`);
       const doc = vscode.workspace.textDocuments.find(
         d => d.uri.toString() === this._trackedUri
       );
@@ -406,7 +386,6 @@ export class PreviewPanel {
       try {
         if (!this._historyRunning) {
           this._panel.reveal(undefined, false);
-          this.log('post-undo reveal re-asserted');
         }
       } catch { /* panel disposed between undo and settle - nothing to focus */ }
     }, 150);
@@ -562,9 +541,6 @@ export class PreviewPanel {
           ? Math.min(this._cardCaret, full.length)
           // A webview-supplied offset is untrusted: snap off surrogates.
           : snapToCodePointBoundary(full, msg.offset, 'backward');
-        this.log(`insertText USING insertAt=${insertAt}`
-          + ` (msg.offset=${msg.offset}, _cardCaret won=${this._cardCaret !== null})`);
-
         const styleId = resolveTypingStyle(
           full, insertAt, this._pendingBold, this._pendingItalic,
           this._activeFamily, this._pendingFamily);
@@ -604,7 +580,7 @@ export class PreviewPanel {
         if (!applied) {
           this._selfEditsInFlight = Math.max(0, this._selfEditsInFlight - 1);
           this._cardCaret = insertAt;
-          this.log('insertText applyEdit REFUSED');
+          console.warn('[LinkedIn Preview] insertText applyEdit refused');
         }
       }).catch((err) => {
         console.error('[LinkedIn Preview] insertText failed:', err);
@@ -644,7 +620,7 @@ export class PreviewPanel {
         const applied = await vscode.workspace.applyEdit(edit);
         if (!applied) {
           this._selfEditsInFlight = Math.max(0, this._selfEditsInFlight - 1);
-          this.log('replaceText applyEdit REFUSED');
+          console.warn('[LinkedIn Preview] replaceText applyEdit refused');
         }
       }).catch((err) => {
         console.error('[LinkedIn Preview] replaceText failed:', err);
@@ -672,7 +648,7 @@ export class PreviewPanel {
         const applied = await vscode.workspace.applyEdit(edit);
         if (!applied) {
           this._selfEditsInFlight = Math.max(0, this._selfEditsInFlight - 1);
-          this.log('insertEmoji applyEdit REFUSED');
+          console.warn('[LinkedIn Preview] insertEmoji applyEdit refused');
         }
       }).catch((err) => {
         console.error('[LinkedIn Preview] insertEmoji failed:', err);
@@ -797,7 +773,6 @@ export class PreviewPanel {
     if (this._hasRendered && structuralKey === this._lastStructuralKey) {
       const external = this._pendingExternal;
       this._pendingExternal = false;
-      this.log(`tx render external=${external} textLen=${text.length}`);
       void this._panel.webview.postMessage({
         type: 'render',
         units: buildOffsetUnits(text, markers),

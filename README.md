@@ -36,6 +36,12 @@ files on its own.
   pick one of eleven font families, toggle bold or italic, add strikethrough
   or underline, insert emoji, clear formatting, place the cursor with a
   click, undo with the usual keys
+- Type directly in the card, like a word processor: styles continue as you
+  type, a family or bold picked at the caret latches for the next run,
+  Enter carries formatting into the new paragraph, arrows and Home/End
+  navigate the wrapped card, Ctrl+Z takes back whole words, and typing over
+  a selection replaces it - every keystroke landing in the file as real
+  Unicode
 - 18 Unicode letterform styles plus two combining marks, with toggles that
   know what Unicode can and cannot do: buttons disable only where no variant
   exists, and selections survive every edit
@@ -55,10 +61,9 @@ Then create any file ending in `.linkedin` and the preview opens by itself.
 
 ## Roadmap
 
-- **Editing in the preview pane.** Type into the rendered card itself, not
-  only the left editor, making the preview a full two-way surface. Text you
-  type on the right lands in the file on the left, already in real Unicode,
-  in whichever family the toolbar is set to.
+- **A CLI and an MCP server.** The same conversion core exposed to scripts
+  and AI agents directly, so an agent connected over MCP can style a post
+  and open the preview without ever being taught the file convention.
 
 ## Under the hood
 
@@ -67,7 +72,7 @@ imports: style tables transcribed from the Unicode charts with their
 exception tables, an 11-family bold/italic matrix, lossless round-trip
 conversion, and fail-closed mapping (a character with no Unicode equivalent
 stays unchanged, never a lookalike). It runs headless, which is why the
-534-test suite finishes in under a second.
+589-test suite finishes in under a second.
 
 The preview is a hardened webview: strict CSP, per-render nonce, every
 message validated at the trust boundary, CSS and JS inlined so a render can

@@ -1496,16 +1496,9 @@
   // to focus the editor, for instance - typing should just work again
   // without a re-click, so put focus back in the catcher if we are armed.
   window.addEventListener('focus', function () {
-    // Diag only (branch-only, rejected by the validator on purpose): shows
-    // in the rx trace whether the webview actually regained focus after an
-    // undo's reveal, which is exactly what went missing when undo went dead.
-    vscode.postMessage({ type: 'diag', event: 'window-focus' });
     if (caretOffset !== null && typeCatcher) {
       typeCatcher.focus({ preventScroll: true });
     }
-  });
-  window.addEventListener('blur', function () {
-    vscode.postMessage({ type: 'diag', event: 'window-blur' });
   });
 
   document.addEventListener('keydown', function (e) {
