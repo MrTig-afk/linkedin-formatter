@@ -15,25 +15,46 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ErrorCode,
+  McpError,
 } from '@modelcontextprotocol/sdk/types.js';
-import { TOOLS, callTool } from './tools';
+import { TOOLS, TOOL_NAMES, SERVER_INSTRUCTIONS, callTool } from './tools';
 
 const VERSION = '0.1.0';
 
 const server = new Server(
   { name: 'linkedin-formatter', version: VERSION },
-  { capabilities: { tools: {} } },
+  {
+    // listChanged is explicitly false: the tool list is a static array, so the
+    // server never emits notifications/tools/list_changed. Declaring true
+    // would be a promise it does not keep.
+    capabilities: { tools: { listChanged: false } },
+    instructions: SERVER_INSTRUCTIONS,
+  },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, () => ({
+  // Order is the declaration order and never varies, so client-side prompt
+  // caching keeps working between sessions.
   tools: TOOLS.map(t => ({
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema,
+    annotations: t.annotations,
   })),
 }));
 
 server.setRequestHandler(CallToolRequestSchema, (request) => {
+  // Two kinds of failure, and the spec draws the line precisely:
+  //
+  //   unknown TOOL     -> protocol error. The model cannot fix this by
+  //                       retrying with different arguments.
+  //   bad ARGUMENTS    -> isError:true in a normal result, so the model reads
+  //                       the message and corrects itself.
+  if (!TOOL_NAMES.has(request.params.name)) {
+    throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${request.params.name}`);
+  }
+
   const result = callTool(request.params.name, request.params.arguments);
   return {
     content: [{ type: 'text' as const, text: result.text }],
