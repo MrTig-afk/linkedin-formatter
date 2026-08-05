@@ -524,14 +524,54 @@
     caret.className = 'card-caret';
     caret.setAttribute('aria-hidden', 'true');
 
-    // Place before the span that starts at the offset; if the caret sits at
-    // the very end there is no such span, so append after the last one.
     var target = body.querySelector('span[data-offset="' + caretOffset + '"]');
     if (target) {
       body.insertBefore(caret, target);
-    } else {
-      body.appendChild(caret);
+      return;
     }
+
+    // No span STARTS here. That happens for a moment after every keystroke:
+    // caretOffset advances immediately but the spans are still the old ones,
+    // so the offset can land inside a character until the render lands.
+    //
+    // Falling back to 'append at the end' made the caret visibly jump to the
+    // end of the post between keystrokes. Put it after the character that
+    // contains the offset instead, and only truly append past the last one.
+    var spans = offsetSpans();
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      var l = parseInt(spans[i].dataset.len, 10);
+      if (isNaN(o) || isNaN(l)) { continue; }
+      if (caretOffset > o && caretOffset < o + l) {
+        body.insertBefore(caret, spans[i].nextSibling);
+        return;
+      }
+    }
+    body.appendChild(caret);
+  }
+
+
+  /**
+   * Nearest real character boundary at or before `offset`.
+   *
+   * Spans are whole visual units, so only their start offsets - plus the very
+   * end of the document - are valid caret positions. Anything else is inside
+   * a character.
+   */
+  function snapToSpanBoundary(offset) {
+    var spans = offsetSpans();
+    if (spans.length === 0) { return 0; }
+    var best = 0;
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      if (isNaN(o)) { continue; }
+      if (o <= offset) { best = o; } else { break; }
+    }
+    // The end of the document is a valid position too.
+    var last = spans[spans.length - 1];
+    var end = parseInt(last.dataset.offset, 10) + parseInt(last.dataset.len, 10);
+    if (offset >= end) { return end; }
+    return best;
   }
 
   function collapsedCaretOffset() {
@@ -543,7 +583,9 @@
     if (!span) { return null; }
     var base = parseInt(span.dataset.offset, 10);
     if (isNaN(base)) { return null; }
-    return base + range.startOffset;
+    // Snap: clicking the right half of a two-unit styled character would
+    // otherwise land between its surrogates.
+    return snapToSpanBoundary(base + range.startOffset);
   }
 
   if (typeCatcher && body) {
@@ -579,6 +621,7 @@
         offset: caretOffset
       });
       caretOffset += text.length;
+      drawCardCaret();   // keep the visible caret with the text, not behind it
     });
 
     // No invalidation listener is needed. Re-render assigns webview.html
@@ -860,5 +903,22 @@
     if (next === null) { return; }
     caretOffset = next;
     drawCardCaret();
+  });
+
+  // -------------------------------------------------------------
+  // Enter: insert a newline.
+  //
+  // The catcher is an <input>, which silently swallows Enter - no input
+  // event, no newline. It has to be handled as a key and posted directly.
+  // -------------------------------------------------------------
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') { return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) { return; }
+    if (caretOffset === null) { return; }
+    e.preventDefault();
+    vscode.postMessage({
+      type: 'insertText', text: '\n', offset: caretOffset
+    });
+    caretOffset += 1;
   });
 })();

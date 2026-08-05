@@ -200,15 +200,24 @@ export function detectFormatting(text: string): DetectedFormat[] {
  */
 export function styleBefore(fullText: string, offset: number): Style | null {
   if (offset <= 0) { return null; }
-  // Take a few units back and pick the last WHOLE code point.
-  const window = fullText.slice(Math.max(0, offset - 4), offset);
-  const chars = [...window];
-  const prev = chars[chars.length - 1];
-  if (prev === undefined) { return null; }
-  const cp = prev.codePointAt(0);
-  if (cp === undefined) { return null; }
-  const detected = detectStyle(cp);
-  return detected === null ? null : detected.style;
+
+  // Walk back over the text before the caret, SKIPPING WHITESPACE, and report
+  // the style of the first real character found.
+  //
+  // Skipping whitespace is what makes this behave like a word processor:
+  // finishing a bold word, pressing space, and carrying on should stay bold.
+  // Stopping at the space would see an unstyled character and drop back to
+  // plain, which is not what anyone means by 'continue typing'.
+  const before = [...fullText.slice(0, offset)];
+  for (let i = before.length - 1; i >= 0; i--) {
+    const ch = before[i];
+    if (/\s/.test(ch)) { continue; }         // space, tab, newline: keep looking
+    const cp = ch.codePointAt(0);
+    if (cp === undefined) { return null; }
+    const detected = detectStyle(cp);
+    return detected === null ? null : detected.style;
+  }
+  return null;
 }
 
 /**
