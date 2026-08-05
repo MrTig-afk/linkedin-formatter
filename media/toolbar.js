@@ -603,6 +603,7 @@
         return;
       }
       caretOffset = offset;
+      desiredX = null;
       typeCatcher.focus({ preventScroll: true });
       drawCardCaret();
     });
@@ -621,6 +622,7 @@
         offset: caretOffset
       });
       caretOffset += text.length;
+      desiredX = null;   // typing sets a new column
       drawCardCaret();   // keep the visible caret with the text, not behind it
     });
 
@@ -886,15 +888,85 @@
     return parseInt(last.dataset.offset, 10) + parseInt(last.dataset.len, 10);
   }
 
+
+  // -------------------------------------------------------------
+  // Up/Down arrows.
+  //
+  // "The line above" cannot be computed from offsets: the card wraps text,
+  // so a visual line has no fixed character count and a newline is not the
+  // only thing that starts one. This uses the RENDERED GEOMETRY instead -
+  // where each span actually sits on screen - which handles wrapped lines and
+  // explicit newlines identically because it only asks the browser where
+  // things are.
+  //
+  // desiredX is the column the user is trying to hold. Real editors remember
+  // it across a run of vertical moves, so going down through a short line and
+  // out the other side returns you to the original column rather than the end
+  // of the short one. Any horizontal move or edit clears it.
+  // -------------------------------------------------------------
+  var desiredX = null;
+
+  function caretRect() {
+    var el = body.querySelector('.card-caret');
+    if (el) {
+      var r = el.getBoundingClientRect();
+      if (r.width || r.height) { return r; }
+    }
+    // No caret element (or a zero-size one): fall back to the span it sits at.
+    var span = body.querySelector('span[data-offset="' + caretOffset + '"]');
+    if (span) { return span.getBoundingClientRect(); }
+    var spans = offsetSpans();
+    return spans.length ? spans[spans.length - 1].getBoundingClientRect() : null;
+  }
+
+  /** Offset of the span nearest to (x, y) on the target visual line. */
+  function offsetNearest(x, y) {
+    var spans = offsetSpans();
+    var best = null;
+    var bestScore = Infinity;
+    for (var i = 0; i < spans.length; i++) {
+      var r = spans[i].getBoundingClientRect();
+      if (!r.height) { continue; }
+      var midY = r.top + r.height / 2;
+      // Vertical distance dominates so a span on the right line always beats
+      // a horizontally closer one on the wrong line.
+      var score = Math.abs(midY - y) * 1000 + Math.abs(r.left - x);
+      if (score < bestScore) { bestScore = score; best = spans[i]; }
+    }
+    return best === null ? null : parseInt(best.dataset.offset, 10);
+  }
+
+  function moveVertical(direction) {
+    var rect = caretRect();
+    if (!rect) { return null; }
+    if (desiredX === null) { desiredX = rect.left; }
+
+    // One line height, measured from the card rather than assumed.
+    var lh = parseFloat(getComputedStyle(body).lineHeight);
+    if (isNaN(lh) || lh <= 0) { lh = rect.height || 18; }
+
+    var targetY = rect.top + rect.height / 2 + (direction === 'up' ? -lh : lh);
+    var next = offsetNearest(desiredX, targetY);
+
+    // Already on the first or last line: behave like Home / End, which is
+    // what every editor does rather than doing nothing.
+    if (next === null || next === caretOffset) {
+      return direction === 'up' ? 0 : documentEnd();
+    }
+    return next;
+  }
+
   document.addEventListener('keydown', function (e) {
     if (caretOffset === null) { return; }
     if (e.ctrlKey || e.metaKey || e.altKey) { return; }
 
     var next = null;
-    if (e.key === 'ArrowLeft')  { next = caretLeftOf(caretOffset); }
-    else if (e.key === 'ArrowRight') { next = caretRightOf(caretOffset); }
-    else if (e.key === 'Home')  { next = 0; }
-    else if (e.key === 'End')   { next = documentEnd(); }
+    if (e.key === 'ArrowLeft')  { next = caretLeftOf(caretOffset); desiredX = null; }
+    else if (e.key === 'ArrowRight') { next = caretRightOf(caretOffset); desiredX = null; }
+    else if (e.key === 'Home')  { next = 0; desiredX = null; }
+    else if (e.key === 'End')   { next = documentEnd(); desiredX = null; }
+    else if (e.key === 'ArrowUp')   { next = moveVertical('up'); }
+    else if (e.key === 'ArrowDown') { next = moveVertical('down'); }
     else { return; }
 
     e.preventDefault();
