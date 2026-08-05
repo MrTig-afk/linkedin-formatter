@@ -99,19 +99,40 @@ test('contributes.commands registers linkedinFormatter.toggleStrikethrough', () 
   assert.strictEqual(cmd.title, 'LinkedIn: Toggle Strikethrough');
 });
 
-test('contributes.keybindings has exactly 4 entries', () => {
+test('contributes.keybindings has exactly 6 entries', () => {
+  // 4 editor bindings, plus ctrl+b / ctrl+i re-declared for the preview panel.
   assert.ok(Array.isArray(pkg.contributes.keybindings));
-  assert.strictEqual(pkg.contributes.keybindings.length, 4);
+  assert.strictEqual(pkg.contributes.keybindings.length, 6);
 });
 
-test('every keybinding is scoped to editorTextFocus && editorLangId == linkedin', () => {
+test('NO keybinding is global - every one is scoped to a context', () => {
+  // The invariant that matters: an unscoped ctrl+b would hijack Toggle Primary
+  // Side Bar for every VS Code user who installs this, everywhere. Two scopes
+  // are legitimate here and nothing else is.
+  const ALLOWED = new Set([
+    "editorTextFocus && editorLangId == 'linkedin'",
+    "activeWebviewPanelId == 'linkedinFormatter.preview'",
+  ]);
   for (const kb of pkg.contributes.keybindings) {
-    assert.strictEqual(
-      kb.when,
-      "editorTextFocus && editorLangId == 'linkedin'",
-      `keybinding for ${kb.command} has wrong when clause: ${kb.when}`
+    assert.ok(kb.when, `keybinding for ${kb.command} has NO when clause - it would be global`);
+    assert.ok(
+      ALLOWED.has(kb.when),
+      `keybinding for ${kb.command} has an unrecognised when clause: ${kb.when}`
     );
   }
+});
+
+test('the preview-scoped bindings exist so VS Code stops stealing ctrl+b', () => {
+  // Without these, ctrl+b in the preview falls through to the workbench and
+  // toggles the side bar while the panel also handles it. The bound command
+  // no-ops when there is no active editor; its job here is to consume the key.
+  const preview = pkg.contributes.keybindings.filter(
+    (kb: { when: string }) => kb.when === "activeWebviewPanelId == 'linkedinFormatter.preview'");
+  assert.strictEqual(preview.length, 2, 'expected ctrl+b and ctrl+i for the preview');
+  assert.deepEqual(
+    preview.map((kb: { key: string }) => kb.key).sort(),
+    ['ctrl+b', 'ctrl+i'],
+  );
 });
 
 test('keybinding key assignments are correct', () => {
@@ -170,4 +191,29 @@ test('cardTheme defaults to editor (owner pick, 2026-08-04)', () => {
   assert.ok(prop, 'cardTheme setting must exist');
   assert.strictEqual(prop.default, 'editor');
   assert.deepStrictEqual(prop.enum, ['daylight', 'midnight', 'dim', 'editor']);
+});
+
+// ---------------------------------------------------------------------------
+// M4.4 wiring: typed text takes the active family, not the surrounding style
+// ---------------------------------------------------------------------------
+
+test('previewPanel resolves typed text through family + latched axes', () => {
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '..', '..', '..', 'src', 'webview', 'previewPanel.ts'), 'utf-8');
+  const idx = src.indexOf("message.type === 'insertText'");
+  assert.ok(idx !== -1, "insertText handler not found");
+  const block = src.slice(idx, idx + 2200);   // widened: the handler grew
+  // The Word model: typing inherits from the run at the caret, a pending
+  // Ctrl+B/I override beats inheritance for that axis, the toolbar family is
+  // the fallback. All of it lives in ONE pure resolver so the insert path and
+  // the lit toolbar button can never disagree.
+  assert.ok(
+    block.includes('resolveTypingStyle('),
+    'typed text must resolve through resolveTypingStyle (PRD S7.4, issue #2)'
+  );
+  assert.ok(
+    block.includes('this._activeFamily') && block.includes('this._pendingBold')
+      && block.includes('this._pendingItalic'),
+    'typing must honour the fallback family and both pending axis overrides'
+  );
 });

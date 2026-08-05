@@ -40,6 +40,11 @@
   // Returns { start: number, end: number } or null.
   // ---------------------------------------------------------------
   function resolveSelectionOffsets() {
+    // The keyboard selection wins when active: it is precise, and the
+    // native selection cannot exist at the same time (focus is in the
+    // hidden input while the keyboard model is in use).
+    var kbd = kbdSelection();
+    if (kbd !== null) { return kbd; }
     var sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) { return null; }
 
@@ -102,13 +107,16 @@
   document.querySelectorAll('.axis-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
       if (btn.disabled) { return; }
+      // With a selection, restyle it. With none, send a COLLAPSED range:
+      // the extension reads that as "latch this axis for typing" (issue #2).
       var offsets = resolveSelectionOffsets();
-      if (!offsets) { return; }
+      var start = offsets ? offsets.start : 0;
+      var end = offsets ? offsets.end : 0;
       vscode.postMessage({
         type: 'toggleAxis',
         axis: btn.dataset.axis,
-        start: offsets.start,
-        end: offsets.end
+        start: start,
+        end: end
       });
     });
   });
@@ -179,6 +187,11 @@
         });
       } else {
         vscode.postMessage({ type: 'setFamily', family: family });
+        // The pick stole focus into the dropdown. Hand it straight back to
+        // the catcher so pick-then-type works without a re-click.
+        if (typeCatcher && caretOffset !== null) {
+          typeCatcher.focus({ preventScroll: true });
+        }
       }
     });
 
@@ -402,7 +415,10 @@
     var offsets = resolveSelectionOffsets();
     var start = offsets ? offsets.start : 0;
     var end = offsets ? offsets.end : 0;
-    if (start === lastSelState.start && end === lastSelState.end) { return; }
+    // No dedupe against the last report: the extension may have dropped its
+    // copy in the meantime (any setCaret clears it), so an identical-looking
+    // state can still be news. This is debounced to one post per gesture,
+    // so repeating is cheap; silently skipping desynced the two sides.
     lastSelState = { start: start, end: end };
     vscode.postMessage({ type: 'selectionState', start: start, end: end });
   }
@@ -450,20 +466,6 @@
     body.appendChild(marker);
   })();
 
-  // ---------------------------------------------------------------
-  // Undo/redo from the preview: forward to the real editor's undo stack.
-  // ---------------------------------------------------------------
-  document.body.addEventListener('keydown', function (e) {
-    if (!(e.ctrlKey || e.metaKey)) { return; }
-    var key = e.key.toLowerCase();
-    if (key === 'z' && !e.shiftKey) {
-      e.preventDefault();
-      vscode.postMessage({ type: 'undo' });
-    } else if (key === 'y' || (key === 'z' && e.shiftKey)) {
-      e.preventDefault();
-      vscode.postMessage({ type: 'redo' });
-    }
-  });
 
   // Insert via event delegation on the groups container.
   var emojiGroupsEl = document.getElementById('emoji-groups');
@@ -472,6 +474,11 @@
       var btn = e.target;
       if (!btn.classList || !btn.classList.contains('emoji-item')) { return; }
       vscode.postMessage({ type: 'insertEmoji', emoji: btn.dataset.emoji });
+      // Hand focus straight back to typing; the extension advances the
+      // caret past the emoji and echoes it with the next render.
+      if (caretOffset !== null && typeCatcher) {
+        typeCatcher.focus({ preventScroll: true });
+      }
       // Hide the picker and reset the search input.
       if (emojiPicker) { emojiPicker.setAttribute('hidden', ''); }
       if (emojiSearch) {
@@ -480,4 +487,1055 @@
       }
     });
   }
+
+  // ---------------------------------------------------------------
+  // M4.1 Typing in the card.
+  //
+  // Keystrokes land in a hidden input (#type-catcher) rather than a
+  // contenteditable body: the card's DOM is regenerated from offset spans on
+  // every render, and contenteditable would make the browser a second writer
+  // to that same DOM (PRD Q1).
+  //
+  // The caret offset is tracked here in the webview because the document
+  // round trip is far slower than typing. Each insert advances it locally and
+  // optimistically; without that, every keystroke in a fast burst would post
+  // the same offset and the text would arrive reversed.
+  // ---------------------------------------------------------------
+  var typeCatcher = document.getElementById('type-catcher');
+  var caretOffset = null;
+
+  // Precise offset of a collapsed caret: the span's start plus how far into
+  // that span's text node the caret sits. The span offset alone would snap
+  // every insert to a span boundary.
+
+  // -------------------------------------------------------------
+  // The card caret.
+  //
+  // .caret-marker mirrors the LEFT editor and only renders while the editor
+  // has focus - which means it disappears the moment you click into the card
+  // to type. So the card draws its own, at the armed offset, whenever typing
+  // is armed. Without it there is no way to tell the card is ready.
+  // -------------------------------------------------------------
+  function clearCardCaret() {
+    var old = body.querySelectorAll('.card-caret');
+    for (var i = 0; i < old.length; i++) { old[i].remove(); }
+  }
+
+  function drawCardCaret() {
+    clearCardCaret();
+    if (caretOffset === null) { return; }
+    var caret = document.createElement('span');
+    caret.className = 'card-caret';
+    caret.setAttribute('aria-hidden', 'true');
+
+    // assoc 'before': lean on the character BEHIND the caret. At a soft
+    // wrap this is the difference between drawing at the end of the line
+    // the user is on and hopping to the start of the next one.
+    if (caretAssoc === 'before') {
+      var prevSpans = offsetSpans();
+      for (var pi = 0; pi < prevSpans.length; pi++) {
+        var po = parseInt(prevSpans[pi].dataset.offset, 10);
+        var pl = parseInt(prevSpans[pi].dataset.len, 10);
+        if (!isNaN(po) && !isNaN(pl) && po + pl === caretOffset) {
+          body.insertBefore(caret, prevSpans[pi].nextSibling);
+          return;
+        }
+      }
+    }
+
+    var target = body.querySelector('span[data-offset="' + caretOffset + '"]');
+    if (target) {
+      body.insertBefore(caret, target);
+      return;
+    }
+
+    // No span STARTS here. That happens for a moment after every keystroke:
+    // caretOffset advances immediately but the spans are still the old ones,
+    // so the offset can land inside a character until the render lands.
+    //
+    // Falling back to 'append at the end' made the caret visibly jump to the
+    // end of the post between keystrokes. Put it after the character that
+    // contains the offset instead, and only truly append past the last one.
+    var spans = offsetSpans();
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      var l = parseInt(spans[i].dataset.len, 10);
+      if (isNaN(o) || isNaN(l)) { continue; }
+      if (caretOffset > o && caretOffset < o + l) {
+        body.insertBefore(caret, spans[i].nextSibling);
+        return;
+      }
+    }
+    body.appendChild(caret);
+  }
+
+
+  /**
+   * Nearest real character boundary at or before `offset`.
+   *
+   * Spans are whole visual units, so only their start offsets - plus the very
+   * end of the document - are valid caret positions. Anything else is inside
+   * a character.
+   */
+  function snapToSpanBoundary(offset) {
+    var spans = offsetSpans();
+    if (spans.length === 0) { return 0; }
+    var best = 0;
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      if (isNaN(o)) { continue; }
+      if (o <= offset) { best = o; } else { break; }
+    }
+    // The end of the document is a valid position too.
+    var last = spans[spans.length - 1];
+    var end = parseInt(last.dataset.offset, 10) + parseInt(last.dataset.len, 10);
+    if (offset >= end) { return end; }
+    return best;
+  }
+
+
+  /**
+   * Move the caret AND tell the extension, immediately.
+   *
+   * Every path that moves the caret must go through here. The two sides were
+   * previously desynchronised in two ways: a click armed the webview at once
+   * but only reached the extension 200ms later via the deferred cursorSync,
+   * and arrow-key movement was never reported at all. Anything typed in
+   * those windows was inserted wherever the extension last believed the
+   * caret to be - usually somewhere further up the post.
+   */
+  /**
+   * Which side of a soft-wrap the caret leans on. At a wrap point the
+   * offset alone names TWO positions - end of this visual line and start
+   * of the next - so drawing needs to know which one is meant. 'before'
+   * sticks to the character behind (End, typing); 'after' to the one
+   * ahead (Home, clicks, most movement).
+   */
+  var caretAssoc = 'after';
+
+
+  // -------------------------------------------------------------
+  // Keyboard selection.
+  //
+  // Native DOM selection covers the mouse; it cannot cover the keyboard,
+  // because focus lives in the hidden input while typing and the browser
+  // will not extend a selection in an element that does not have focus.
+  // So Shift+movement maintains its own {anchor, head} pair - the anchor
+  // fixed where the selection began, the head being caretOffset - and the
+  // highlight is painted by toggling a class on the offset spans. No
+  // innerHTML, and the paint survives nothing: any render clears it,
+  // because new spans mean the painted ones are gone anyway.
+  // -------------------------------------------------------------
+  var selAnchor = null;
+
+  function kbdSelection() {
+    if (selAnchor === null || caretOffset === null) { return null; }
+    if (selAnchor === caretOffset) { return null; }
+    return {
+      start: Math.min(selAnchor, caretOffset),
+      end: Math.max(selAnchor, caretOffset)
+    };
+  }
+
+  function paintKbdSelection() {
+    var sel = kbdSelection();
+    var spans = offsetSpans();
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      var on = sel !== null && o >= sel.start && o < sel.end;
+      if (on) { spans[i].classList.add('kbd-selected'); }
+      else { spans[i].classList.remove('kbd-selected'); }
+    }
+  }
+
+  function collapseKbdSelection() {
+    selAnchor = null;
+    paintKbdSelection();
+  }
+
+  function setCaret(offset, assoc) {
+    // A plain move ends any keyboard selection; extending moves go through
+    // extendTo instead, which preserves the anchor around this call.
+    var keepAnchor = setCaret._extending === true;
+    if (!keepAnchor) { selAnchor = null; }
+    caretOffset = offset;
+    caretAssoc = assoc || 'after';
+    drawCardCaret();
+    if (offset !== null) {
+      vscode.postMessage({ type: 'setCaret', offset: offset, assoc: caretAssoc });
+    }
+    paintKbdSelection();
+  }
+
+  /** Move the head while keeping the anchor: the Shift+movement path. */
+  function extendTo(offset, assoc) {
+    if (offset === null || caretOffset === null) { return true; }
+    if (selAnchor === null) { selAnchor = caretOffset; }
+    setCaret._extending = true;
+    setCaret(offset, assoc);
+    setCaret._extending = false;
+    return true;
+  }
+
+  /** Disarm typing AND tell the extension, so it cannot keep a stale caret
+   *  and quietly aim the next emoji or edit at a spot the user left. */
+  function clearCaret() {
+    caretOffset = null;
+    clearCardCaret();
+    vscode.postMessage({ type: 'clearCaret' });
+  }
+
+  function collapsedCaretOffset() {
+    var sel = window.getSelection();
+    if (!sel || !sel.isCollapsed || sel.rangeCount === 0) { return null; }
+    var range = sel.getRangeAt(0);
+    if (!body || !body.contains(range.startContainer)) { return null; }
+    var span = closestOffsetSpan(range.startContainer);
+    if (!span) { return null; }
+    var base = parseInt(span.dataset.offset, 10);
+    var len = parseInt(span.dataset.len, 10);
+    if (isNaN(base)) { return null; }
+    // Snap: clicking the right half of a two-unit styled character would
+    // otherwise land between its surrogates. Whether the raw point was at
+    // or past the span's end also tells us which side the caret should
+    // lean on - clicking the tail of the last character on a wrapped line
+    // must draw there, not at the start of the next line.
+    var raw = base + range.startOffset;
+    return {
+      offset: snapToSpanBoundary(raw),
+      assoc: (!isNaN(len) && raw >= base + len) ? 'before' : 'after'
+    };
+  }
+
+  if (typeCatcher && body) {
+    // Only a collapsed click arms typing. A drag-selection must keep focus in
+    // the body, or the selection the toolbar acts on would be destroyed.
+    body.addEventListener('click', function (e) {
+      var sel = window.getSelection();
+      if (sel && !sel.isCollapsed) {
+        // A drag-selection. Disarm typing - and TELL the extension, or it
+        // keeps the previous caret and aims the next emoji at it. Focus
+        // stays in the body so the toolbar can act on the selection.
+        clearCaret();
+        return;
+      }
+
+      var hit = collapsedCaretOffset();
+      var offset;
+      var assoc;
+      if (hit !== null) {
+        offset = hit.offset;
+        assoc = hit.assoc;
+      } else {
+        // Clicked inside the card but not on a character - the padding, or
+        // the empty area under the last line. Every editor treats that as
+        // 'put me at the nearest position', not as a dead click. (The dead
+        // click was worse than useless: it silently desynced the two sides
+        // and the next emoji landed wherever the extension last heard.)
+        var spans = offsetSpans();
+        if (spans.length === 0) {
+          offset = 0;
+          assoc = 'after';
+        } else {
+          var last = spans[spans.length - 1].getBoundingClientRect();
+          if (e.clientY > last.bottom) {
+            offset = documentEnd();
+            assoc = 'before';
+          } else {
+            var near = offsetNearest(e.clientX, e.clientY);
+            offset = near === null ? documentEnd() : near;
+            assoc = near === null ? 'before' : 'after';
+          }
+        }
+      }
+      desiredX = null;
+      typeCatcher.focus({ preventScroll: true });
+      setCaret(offset, assoc);
+    });
+
+    // 'input' fires once per committed change, including at the end of an IME
+    // composition, so a composed character arrives whole rather than as its
+    // intermediate candidates.
+    typeCatcher.addEventListener('input', function () {
+      var text = typeCatcher.value;
+      typeCatcher.value = '';
+      if (!text) { return; }
+      if (caretOffset === null) { return; }
+      vscode.postMessage({
+        type: 'insertText',
+        text: text,
+        offset: caretOffset
+      });
+      // Deliberately NOT advanced here.
+      //
+      // Guessing was worse than waiting. Styling changes the length - "a"
+      // becomes a two-unit astral character - and only the extension knows
+      // by how much, so any local guess is wrong by one unit per styled
+      // character. Drawing at that guess made the caret visibly jump back
+      // into the middle of the word being typed.
+      //
+      // The extension ignores this offset anyway (it owns the caret) and
+      // sends the true position back with the render a few milliseconds
+      // later. Holding the caret still until then is invisible; moving it
+      // to the wrong place is not.
+      desiredX = null;   // typing sets a new column
+    });
+
+    // No invalidation listener is needed. Re-render assigns webview.html
+    // wholesale, which tears down the document and re-runs this script, so
+    // caretOffset resets to null on its own. That same teardown is why
+    // typing currently survives exactly one character - see M4.2.
+  }
+
+  // ---------------------------------------------------------------
+  // M4.2 In-place render.
+  //
+  // The extension used to reassign webview.html on every document change,
+  // which reloaded ~52KB, cost ~25ms, and destroyed focus and the caret -
+  // so typing died after one character. It now sends the changed text here
+  // and this rebuilds the body in place. Nothing is torn down, so the
+  // type-catcher keeps focus and caretOffset survives.
+  //
+  // The payload carries STRUCTURED UNITS, never HTML. Every node below is
+  // built with createElement + textContent, so nothing on this channel is
+  // ever parsed as markup and there is no injection sink to protect. That
+  // matches the rest of this file, which uses innerHTML nowhere.
+  // ---------------------------------------------------------------
+  function isRenderPayload(d) {
+    return d && d.type === 'render' && Object.prototype.toString.call(d.units) === '[object Array]';
+  }
+
+  // Visible cue that typing just disarmed. The class is removed on the
+  // animation end AND on a timer: animationend does not fire when the tab
+  // is hidden or when reduced-motion turns the animation off, and a class
+  // left stuck on would make the next flash a no-op.
+  var interruptTimer = null;
+  function flashInterrupted() {
+    var card = document.querySelector('.linkedin-card');
+    if (!card) { return; }
+    card.classList.remove('typing-interrupted');
+    void card.offsetWidth;          // reflow, so re-adding restarts it
+    card.classList.add('typing-interrupted');
+    if (interruptTimer !== null) { clearTimeout(interruptTimer); }
+    interruptTimer = setTimeout(function () {
+      interruptTimer = null;
+      card.classList.remove('typing-interrupted');
+    }, 700);
+  }
+
+
+  /**
+   * Apply toolbar state from a render message.
+   *
+   * This exists so latching bold does not have to rebuild the page. The
+   * toolbar used to be baked into the HTML, so any change to it triggered a
+   * full reload - which destroyed focus and the caret, and left the user
+   * pressing Ctrl+B and then unable to type.
+   */
+  function applyToolbar(t) {
+    if (!t || typeof t !== 'object') { return; }
+
+    if (familySelect && typeof t.family === 'string') {
+      var opt = familySelect.querySelector('option[value="' + t.family + '"]');
+      if (opt) { familySelect.value = t.family; }
+    }
+
+    var pairs = [
+      ['axis-bold', t.bold === true, t.boldAvailable !== false],
+      ['axis-italic', t.italic === true, t.italicAvailable !== false],
+    ];
+    for (var i = 0; i < pairs.length; i++) {
+      var btn = document.getElementById(pairs[i][0]);
+      if (!btn) { continue; }
+      btn.disabled = !pairs[i][2];
+      if (pairs[i][1]) { btn.classList.add('active'); }
+      else { btn.classList.remove('active'); }
+    }
+
+    // S/U light up when the whole selection already carries the mark, and
+    // disable when the selection's family cannot render marks at all
+    // (enclosed glyphs) - exactly like the bold button does for its axis.
+    var markPairs = [
+      ['strikethrough', t.strikethrough === true],
+      ['underline', t.underline === true],
+    ];
+    for (var j = 0; j < markPairs.length; j++) {
+      var mb = document.querySelector('.mark-btn[data-style-id="' + markPairs[j][0] + '"]');
+      if (!mb) { continue; }
+      mb.disabled = t.marksAvailable === false;
+      if (markPairs[j][1] && !mb.disabled) { mb.classList.add('active'); }
+      else { mb.classList.remove('active'); }
+    }
+  }
+
+  function applyRender(payload) {
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < payload.units.length; i++) {
+      var u = payload.units[i];
+      if (!u || typeof u !== 'object') { continue; }
+      if (u.kind === 'span') {
+        if (typeof u.text !== 'string' || typeof u.offset !== 'number') { continue; }
+        var span = document.createElement('span');
+        span.dataset.offset = String(u.offset);
+        span.dataset.len = String(u.len);
+        span.textContent = u.text;          // text, never markup
+        frag.appendChild(span);
+      } else if (u.kind === 'marker') {
+        var div = document.createElement('div');
+        div.className = 'truncation-marker';
+        var label = document.createElement('span');
+        label.className = 'truncation-label';
+        label.textContent = String(u.label === undefined ? '' : u.label);
+        div.appendChild(label);
+        frag.appendChild(div);
+      }
+    }
+    body.replaceChildren(frag);
+
+    // M4.5: an edit we did not make - an AI CLI writing to the file, an undo,
+    // or typing in the left editor - has moved the text underneath the offset
+    // this webview is holding. Disarm rather than insert somewhere wrong; the
+    // next click re-arms. Dropping a keystroke is recoverable, putting one in
+    // the wrong place silently is not.
+    if (payload.external === true) {
+      // Only signal when typing was actually armed. Flashing at someone who
+      // was not typing is noise, and noise gets ignored - including the time
+      // it matters.
+      if (caretOffset !== null) { flashInterrupted(); }
+      caretOffset = null;
+    } else if (typeof payload.caret === 'number') {
+      // The extension owns the caret, because only it knows how long the
+      // styled text it inserted actually was. Our optimistic value exists
+      // solely to draw between keystrokes; correct it whenever the truth
+      // arrives. Without this the two drift by one unit per styled character
+      // and inserts start landing inside the previous one.
+      // Assign directly, never through setCaret: this value CAME from the
+      // extension, and posting it back would be an endless round trip.
+      // (Re)arm from the extension's truth - including from a disarmed
+      // state, which is how typing comes back after our own undo.
+      caretOffset = payload.caret;
+      if (payload.caretAssoc === 'before' || payload.caretAssoc === 'after') {
+        caretAssoc = payload.caretAssoc;
+      }
+      drawCardCaret();
+    }
+
+    var c = payload.counter;
+    var counterEl = document.getElementById('char-counter');
+    if (counterEl && c && typeof c.count === 'number' && typeof c.limit === 'number') {
+      var over = c.state === 'over';
+      counterEl.textContent = c.count + ' / ' + c.limit +
+        (over ? ' (-' + (c.count - c.limit) + ')' : '');
+      counterEl.className = 'char-counter' +
+        (c.state === 'warning' ? ' counter-warning' : over ? ' counter-over' : '');
+    }
+
+    applyToolbar(payload.toolbar);
+
+    // New spans: the painted selection is on dead nodes. Repaint it from
+    // the extension's stored range - the native mouse selection cannot
+    // survive replaceChildren, which is why a double-click "suddenly
+    // unselected" the moment the toolbar re-rendered. Adopting the range
+    // into the keyboard-selection model keeps type-over, delete, Escape
+    // and every toolbar button working on it.
+    var rs = payload.selection;
+    if (payload.external !== true && rs && typeof rs.start === 'number'
+        && typeof rs.end === 'number' && rs.start < rs.end) {
+      selAnchor = rs.start;
+      // Assign directly, never through setCaret: this value CAME from the
+      // extension, and posting it back would clear the very selection it
+      // carries.
+      caretOffset = rs.end;
+      caretAssoc = 'before';
+    } else {
+      selAnchor = null;
+    }
+    paintKbdSelection();
+
+    // replaceChildren wiped the caret along with the old spans; put it back
+    // at whatever offset is armed now.
+    drawCardCaret();
+  }
+
+  // Inbound from the extension. Shape-checked before use, same discipline the
+  // extension applies to messages coming the other way.
+  window.addEventListener('message', function (event) {
+    if (!isRenderPayload(event.data)) { return; }
+    applyRender(event.data);
+  });
+
+  // ---------------------------------------------------------------
+  // M4.3 Deletion: backspace and delete.
+  //
+  // Sent as replaceText with an empty string, so a deletion is ONE undo entry.
+  //
+  // Ranges come from the rendered spans, never from arithmetic on the caret.
+  // A span is one visual unit - a code point plus any combining marks - so
+  // deleting a span's range removes a whole character. Doing caret-1 instead
+  // would split a surrogate pair and leave half an emoji in the document.
+  //
+  // The listener is on document, not window: a keydown must be caught wherever
+  // focus sits, and focus is either the type-catcher or the card body. Only
+  // CLICK listeners are barred from document (they would swallow toolbar
+  // clicks); keydown does not have that problem.
+  // ---------------------------------------------------------------
+
+  // -------------------------------------------------------------
+  // Word-wise deletion (Ctrl+Backspace / Ctrl+Delete).
+  //
+  // Boundaries are computed from the rendered spans rather than from the
+  // document text, which the webview does not have. A span is one visual
+  // unit, so this treats a styled character or an emoji as one character -
+  // exactly as single-character deletion does.
+  // -------------------------------------------------------------
+  function offsetSpans() {
+    return Array.prototype.slice.call(body.querySelectorAll('span[data-offset]'));
+  }
+
+  function isSpaceSpan(span) {
+    return /^\s+$/.test(span.textContent || '');
+  }
+
+  /** Start offset of the word ending at `offset`, for Ctrl+Backspace. */
+  function wordStartBefore(offset) {
+    var spans = offsetSpans();
+    var i = spans.length - 1;
+    while (i >= 0 && parseInt(spans[i].dataset.offset, 10) >= offset) { i--; }
+    if (i < 0) { return null; }
+    // Skip the whitespace immediately behind the caret, then the word.
+    while (i >= 0 && isSpaceSpan(spans[i])) { i--; }
+    while (i >= 0 && !isSpaceSpan(spans[i])) { i--; }
+    var start = i < 0 ? 0 : parseInt(spans[i].dataset.offset, 10) +
+                            parseInt(spans[i].dataset.len, 10);
+    return start >= offset ? null : start;
+  }
+
+  /** End offset of the word starting at `offset`, for Ctrl+Delete. */
+  function wordEndAfter(offset) {
+    var spans = offsetSpans();
+    var i = 0;
+    while (i < spans.length && parseInt(spans[i].dataset.offset, 10) < offset) { i++; }
+    if (i >= spans.length) { return null; }
+    while (i < spans.length && isSpaceSpan(spans[i])) { i++; }
+    while (i < spans.length && !isSpaceSpan(spans[i])) { i++; }
+    var end = i >= spans.length
+      ? parseInt(spans[spans.length - 1].dataset.offset, 10) +
+        parseInt(spans[spans.length - 1].dataset.len, 10)
+      : parseInt(spans[i].dataset.offset, 10);
+    return end <= offset ? null : end;
+  }
+
+  function spanEndingAt(offset) {
+    var spans = body.querySelectorAll('span[data-offset]');
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      var l = parseInt(spans[i].dataset.len, 10);
+      if (!isNaN(o) && !isNaN(l) && o + l === offset) { return { start: o, end: offset }; }
+    }
+    return null;
+  }
+  function spanStartingAt(offset) {
+    var span = body.querySelector('span[data-offset="' + offset + '"]');
+    if (!span) { return null; }
+    var l = parseInt(span.dataset.len, 10);
+    if (isNaN(l)) { return null; }
+    return { start: offset, end: offset + l };
+  }
+
+  /** Delete whatever is selected in the card. Shared by both delete keys. */
+  function deleteSelection() {
+    var sel = resolveSelectionOffsets();
+    if (!sel || sel.start === sel.end) { return false; }
+    vscode.postMessage({ type: 'replaceText', start: sel.start, end: sel.end, text: '' });
+    setCaret(sel.start);
+    return true;
+  }
+
+  function deleteCharBackward() {
+    if (deleteSelection()) { return true; }
+    if (caretOffset === null) { return false; }
+    var r = spanEndingAt(caretOffset);
+    if (!r) { return false; }
+    vscode.postMessage({ type: 'replaceText', start: r.start, end: r.end, text: '' });
+    setCaret(r.start);
+    return true;
+  }
+
+  function deleteCharForward() {
+    if (deleteSelection()) { return true; }
+    if (caretOffset === null) { return false; }
+    var r = spanStartingAt(caretOffset);
+    if (!r) { return false; }
+    vscode.postMessage({ type: 'replaceText', start: r.start, end: r.end, text: '' });
+    return true;
+  }
+
+  function deleteWordBackward() {
+    if (deleteSelection()) { return true; }
+    if (caretOffset === null) { return false; }
+    var from = wordStartBefore(caretOffset);
+    if (from === null || from >= caretOffset) { return false; }
+    vscode.postMessage({ type: 'replaceText', start: from, end: caretOffset, text: '' });
+    setCaret(from);
+    return true;
+  }
+
+  function deleteWordForward() {
+    if (deleteSelection()) { return true; }
+    if (caretOffset === null) { return false; }
+    var to = wordEndAfter(caretOffset);
+    if (to === null || to <= caretOffset) { return false; }
+    vscode.postMessage({ type: 'replaceText', start: caretOffset, end: to, text: '' });
+    return true;
+  }
+
+  // -------------------------------------------------------------
+  // Arrow-key navigation.
+  //
+  // The card caret is a JS variable, not a real browser caret, so nothing
+  // moves it on its own - focus sits in the hidden input, where arrow keys
+  // just move within an empty field. These move it explicitly.
+  //
+  // Movement is per SPAN, not per code unit, so one press crosses a whole
+  // styled character or emoji rather than landing between its surrogates.
+  // -------------------------------------------------------------
+  function caretLeftOf(offset) {
+    var spans = offsetSpans();
+    var prev = null;
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      if (o >= offset) { break; }
+      prev = o;
+    }
+    return prev;
+  }
+
+  function caretRightOf(offset) {
+    var spans = offsetSpans();
+    for (var i = 0; i < spans.length; i++) {
+      var o = parseInt(spans[i].dataset.offset, 10);
+      if (o > offset) { return o; }
+    }
+    // Past the last span: the end of the document.
+    if (spans.length === 0) { return null; }
+    var last = spans[spans.length - 1];
+    var end = parseInt(last.dataset.offset, 10) + parseInt(last.dataset.len, 10);
+    return end > offset ? end : null;
+  }
+
+  function documentEnd() {
+    var spans = offsetSpans();
+    if (spans.length === 0) { return 0; }
+    var last = spans[spans.length - 1];
+    return parseInt(last.dataset.offset, 10) + parseInt(last.dataset.len, 10);
+  }
+
+
+  // -------------------------------------------------------------
+  // Up/Down arrows.
+  //
+  // "The line above" cannot be computed from offsets: the card wraps text,
+  // so a visual line has no fixed character count and a newline is not the
+  // only thing that starts one. This uses the RENDERED GEOMETRY instead -
+  // where each span actually sits on screen - which handles wrapped lines and
+  // explicit newlines identically because it only asks the browser where
+  // things are.
+  //
+  // desiredX is the column the user is trying to hold. Real editors remember
+  // it across a run of vertical moves, so going down through a short line and
+  // out the other side returns you to the original column rather than the end
+  // of the short one. Any horizontal move or edit clears it.
+  // -------------------------------------------------------------
+  var desiredX = null;
+
+  function caretRect() {
+    var el = body.querySelector('.card-caret');
+    if (el) {
+      var r = el.getBoundingClientRect();
+      if (r.width || r.height) { return r; }
+    }
+    // No caret element (or a zero-size one): fall back to the span it sits at.
+    var span = body.querySelector('span[data-offset="' + caretOffset + '"]');
+    if (span) { return span.getBoundingClientRect(); }
+    var spans = offsetSpans();
+    return spans.length ? spans[spans.length - 1].getBoundingClientRect() : null;
+  }
+
+  /** Offset of the span nearest to (x, y) on the target visual line. */
+  function offsetNearest(x, y) {
+    var spans = offsetSpans();
+    var best = null;
+    var bestScore = Infinity;
+    for (var i = 0; i < spans.length; i++) {
+      var r = spans[i].getBoundingClientRect();
+      if (!r.height) { continue; }
+      var midY = r.top + r.height / 2;
+      // Vertical distance dominates so a span on the right line always beats
+      // a horizontally closer one on the wrong line.
+      var score = Math.abs(midY - y) * 1000 + Math.abs(r.left - x);
+      if (score < bestScore) { bestScore = score; best = spans[i]; }
+    }
+    return best === null ? null : parseInt(best.dataset.offset, 10);
+  }
+
+  function moveVertical(direction) {
+    var rect = caretRect();
+    if (!rect) { return null; }
+    if (desiredX === null) { desiredX = rect.left; }
+
+    // One line height, measured from the card rather than assumed.
+    var lh = parseFloat(getComputedStyle(body).lineHeight);
+    if (isNaN(lh) || lh <= 0) { lh = rect.height || 18; }
+
+    var targetY = rect.top + rect.height / 2 + (direction === 'up' ? -lh : lh);
+    var next = offsetNearest(desiredX, targetY);
+
+    // Already on the first or last line: behave like Home / End, which is
+    // what every editor does rather than doing nothing.
+    if (next === null || next === caretOffset) {
+      return direction === 'up' ? 0 : documentEnd();
+    }
+    return next;
+  }
+
+  /** Apply a computed caret position. null means 'nowhere to go'; stay put. */
+  function moveTo(next, keepColumn, assoc) {
+    if (caretOffset === null) { return false; }
+    if (!keepColumn) { desiredX = null; }
+    if (next === null) { return true; }   // handled: at an edge, do not fall through
+    setCaret(next, assoc);
+    return true;
+  }
+
+  function moveCharLeft()  { return moveTo(caretLeftOf(caretOffset), false); }
+  function moveCharRight() { return moveTo(caretRightOf(caretOffset), false); }
+  function moveLineUp()    { return moveTo(moveVertical('up'), true); }
+  function moveLineDown()  { return moveTo(moveVertical('down'), true); }
+  function moveDocStart()  { return moveTo(0, false); }
+  function moveDocEnd()    { return moveTo(documentEnd(), false, 'before'); }
+
+  // -------------------------------------------------------------
+  // Enter: insert a newline.
+  //
+  // The catcher is an <input>, which silently swallows Enter - no input
+  // event, no newline. It has to be handled as a key and posted directly.
+  // -------------------------------------------------------------
+  function insertNewline() {
+    if (caretOffset === null) { return false; }
+    vscode.postMessage({ type: 'insertText', text: '\n', offset: caretOffset });
+    // Not advanced locally. The extension owns the caret and sends the true
+    // position back with the render; guessing here is how the caret ended up
+    // drawing in the wrong place.
+    desiredX = null;
+    return true;
+  }
+
+  function sendUndo() { vscode.postMessage({ type: 'undo' }); return true; }
+  function sendRedo() { vscode.postMessage({ type: 'redo' }); return true; }
+
+  /**
+   * Offset at the start or end of the caret's VISUAL line.
+   *
+   * Geometry again, for the same reason as up/down: the card wraps, so a
+   * visual line has no fixed character count and Home must go to the wrap
+   * point rather than to the paragraph start.
+   */
+  function lineBoundary(which) {
+    var rect = caretRect();
+    if (!rect) { return null; }
+    var midY = rect.top + rect.height / 2;
+    var spans = offsetSpans();
+    var best = null;
+    var bestRect = null;
+    for (var i = 0; i < spans.length; i++) {
+      var r = spans[i].getBoundingClientRect();
+      if (!r.height) { continue; }
+      // Same visual line: vertical centres within half a line of each other.
+      if (Math.abs((r.top + r.height / 2) - midY) > r.height / 2) { continue; }
+      if (best === null
+          || (which === 'start' ? r.left < bestRect.left : r.left > bestRect.left)) {
+        best = spans[i];
+        bestRect = r;
+      }
+    }
+    if (best === null) { return null; }
+    var o = parseInt(best.dataset.offset, 10);
+    if (which === 'start') { return o; }
+
+    // End: skip trailing whitespace. A space at a soft-wrap point HANGS past
+    // the wrap edge (CSS pre-wrap), so a caret element placed after it gets
+    // pushed to the next visual line - the exact trailing-space bug CodeMirror
+    // documents (codemirror/dev#1255). Users read end-of-line as after the
+    // last visible character anyway.
+    var rowSpans = [];
+    var rect = caretRect();
+    if (rect) {
+      var midY = rect.top + rect.height / 2;
+      var all = offsetSpans();
+      for (var k = 0; k < all.length; k++) {
+        var rr = all[k].getBoundingClientRect();
+        if (rr.height && Math.abs((rr.top + rr.height / 2) - midY) <= rr.height / 2) {
+          rowSpans.push(all[k]);
+        }
+      }
+    }
+    for (var j = rowSpans.length - 1; j >= 0; j--) {
+      if (!isSpaceSpan(rowSpans[j])) {
+        return parseInt(rowSpans[j].dataset.offset, 10) +
+               parseInt(rowSpans[j].dataset.len, 10);
+      }
+    }
+    return o + parseInt(best.dataset.len, 10);
+  }
+
+  function moveLineStart() { return moveTo(lineBoundary('start'), false); }
+  function moveLineEnd()   { return moveTo(lineBoundary('end'), false, 'before'); }
+
+  /**
+   * Forward word motion differs by platform, and it is not a detail:
+   * Windows stops at the START of the next word, macOS at the END of it.
+   * Backward motion is identical on both.
+   */
+  function wordStartAfter(offset) {
+    var spans = offsetSpans();
+    var i = 0;
+    while (i < spans.length && parseInt(spans[i].dataset.offset, 10) < offset) { i++; }
+    while (i < spans.length && !isSpaceSpan(spans[i])) { i++; }   // out of this word
+    while (i < spans.length && isSpaceSpan(spans[i])) { i++; }    // over the gap
+    if (i >= spans.length) { return documentEnd(); }
+    return parseInt(spans[i].dataset.offset, 10);
+  }
+
+  function moveWordLeft() {
+    if (caretOffset === null) { return false; }
+    return moveTo(wordStartBefore(caretOffset), false);
+  }
+
+  function moveWordRight() {
+    if (caretOffset === null) { return false; }
+    return moveTo(IS_MAC ? wordEndAfter(caretOffset) : wordStartAfter(caretOffset), false);
+  }
+
+  /**
+   * Bold/italic from the keyboard.
+   *
+   * The toolbar tooltips have always advertised 'Bold (Ctrl+B)', but the
+   * package.json keybinding is gated on editorTextFocus, which is false
+   * whenever focus is in this panel - so the shortcut the UI promised did
+   * nothing here. A collapsed range latches the axis for typing; a real
+   * selection restyles it, matching the buttons exactly.
+   */
+  function toggleAxisKey(axis) {
+    var btn = document.getElementById(axis === 'bold' ? 'axis-bold' : 'axis-italic');
+    if (btn && btn.disabled) { return true; }   // family has no such axis
+    var offsets = resolveSelectionOffsets();
+    vscode.postMessage({
+      type: 'toggleAxis',
+      axis: axis,
+      start: offsets ? offsets.start : 0,
+      end: offsets ? offsets.end : 0
+    });
+    return true;
+  }
+
+  function toggleBoldKey()   { return toggleAxisKey('bold'); }
+  function toggleItalicKey() { return toggleAxisKey('italic'); }
+
+  // --- selection commands ---
+
+  function selCharLeft()  { return extendTo(caretLeftOf(caretOffset), 'after'); }
+  function selCharRight() { return extendTo(caretRightOf(caretOffset), 'after'); }
+  function selLineUp()    { return extendTo(moveVertical('up'), 'after'); }
+  function selLineDown()  { return extendTo(moveVertical('down'), 'after'); }
+  function selLineStart() { return extendTo(lineBoundary('start'), 'after'); }
+  function selLineEnd()   { return extendTo(lineBoundary('end'), 'before'); }
+  function selDocStart()  { return extendTo(0, 'after'); }
+  function selDocEnd()    { return extendTo(documentEnd(), 'before'); }
+  function selWordLeft()  {
+    if (caretOffset === null) { return false; }
+    return extendTo(wordStartBefore(caretOffset), 'after');
+  }
+  function selWordRight() {
+    if (caretOffset === null) { return false; }
+    return extendTo(IS_MAC ? wordEndAfter(caretOffset) : wordStartAfter(caretOffset), 'after');
+  }
+
+  function selectAllCard() {
+    var end = documentEnd();
+    if (end === 0) { return true; }
+    selAnchor = 0;
+    setCaret._extending = true;
+    setCaret(end, 'before');
+    setCaret._extending = false;
+    return true;
+  }
+
+  function collapseSelectionKey() {
+    if (kbdSelection() === null) { return false; }   // nothing to do; let Escape bubble
+    collapseKbdSelection();
+    // Tell the extension too, or the next render repaints the selection
+    // it still remembers.
+    lastSelState = { start: 0, end: 0 };
+    vscode.postMessage({ type: 'selectionState', start: 0, end: 0 });
+    return true;
+  }
+
+  /**
+   * Plain arrows with an active selection COLLAPSE to the directional end
+   * and do not also move - the convention every editor follows, and getting
+   * it wrong reads as "the arrow keys eat a character".
+   */
+  function collapseOr(direction, fallthrough) {
+    var sel = kbdSelection();
+    if (sel === null) { return fallthrough(); }
+    var target = direction === 'start' ? sel.start : sel.end;
+    var assoc = direction === 'start' ? 'after' : 'before';
+    setCaret(target, assoc);   // plain setCaret drops the anchor
+    return true;
+  }
+
+  // ---------------------------------------------------------------
+  // The keymap.
+  //
+  // One listener, one table. This replaced four independent keydown
+  // handlers that each did their own modifier checks; adding Shift variants
+  // and a platform split across four of them would not have stayed coherent.
+  //
+  // Chords are normalised strings, as CodeMirror and ProseMirror both do.
+  // 'Mod' resolves to Ctrl on Windows/Linux and Cmd on macOS. A 'mac' entry
+  // overrides the default binding on macOS only.
+  //
+  // Platform matters for more than taste: on macOS, Cmd+Backspace means
+  // 'delete to line start', so treating Ctrl and Cmd as interchangeable would
+  // delete a word when the user asked for a line. That is a wrong deletion,
+  // not a missing feature.
+  // ---------------------------------------------------------------
+  var IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+
+  // Note: on macOS the system binds Home/End to SCROLLING rather than caret
+  // motion. They stay bound to line start/end here on both platforms, because
+  // that is what Mac users overwhelmingly remap them to anyway, and Cmd+Left
+  // and Cmd+Right are bound alongside for anyone using the native chords.
+
+  function chordOf(e) {
+    var parts = [];
+    if (e.ctrlKey)  { parts.push('Ctrl'); }
+    if (e.altKey)   { parts.push('Alt'); }
+    if (e.metaKey)  { parts.push('Meta'); }
+    if (e.shiftKey) { parts.push('Shift'); }
+    var k = e.key;
+    parts.push(k.length === 1 ? k.toLowerCase() : k);
+    return parts.join('-');
+  }
+
+  /** Resolve 'Mod' for this platform so the table can stay declarative. */
+  function resolveChord(chord) {
+    return chord.replace(/\bMod\b/, IS_MAC ? 'Meta' : 'Ctrl');
+  }
+
+  var BINDINGS = [
+    // Editing
+    { key: 'Enter',            run: insertNewline },
+    { key: 'Backspace',        run: deleteCharBackward },
+    { key: 'Delete',           run: deleteCharForward },
+    { key: 'Mod-Backspace',    mac: 'Alt-Backspace', run: deleteWordBackward },
+    { key: 'Mod-Delete',       mac: 'Alt-Delete',    run: deleteWordForward },
+
+    // History
+    { key: 'Mod-z',            run: sendUndo },
+    { key: 'Mod-y',            run: sendRedo },
+    { key: 'Mod-Shift-z',      run: sendRedo },
+
+    // Caret motion
+    { key: 'ArrowLeft',        run: function () { return collapseOr('start', moveCharLeft); } },
+    { key: 'ArrowRight',       run: function () { return collapseOr('end', moveCharRight); } },
+    { key: 'ArrowUp',          run: moveLineUp },
+    { key: 'ArrowDown',        run: moveLineDown },
+    // Home/End go to the VISUAL line, which is what every editor does and
+    // what wrapping requires. Mod promotes them to the whole document.
+    { key: 'Home',             mac: 'Meta-ArrowLeft',  run: moveLineStart },
+    { key: 'End',              mac: 'Meta-ArrowRight', run: moveLineEnd },
+    { key: 'Mod-Home',         mac: 'Meta-ArrowUp',    run: moveDocStart },
+    { key: 'Mod-End',          mac: 'Meta-ArrowDown',  run: moveDocEnd },
+
+    // Word motion. The logic already existed for deletion; it was never bound
+    // to the arrows because the handler bailed out on any modifier.
+    { key: 'Mod-ArrowLeft',    mac: 'Alt-ArrowLeft',   run: moveWordLeft },
+    { key: 'Mod-ArrowRight',   mac: 'Alt-ArrowRight',  run: moveWordRight },
+
+    // Formatting, finally honouring what the toolbar tooltips promise.
+    { key: 'Mod-b',            run: toggleBoldKey },
+    { key: 'Mod-i',            run: toggleItalicKey },
+
+    // Selection: Shift + every motion above, plus select-all and Escape.
+    { key: 'Shift-ArrowLeft',  run: selCharLeft },
+    { key: 'Shift-ArrowRight', run: selCharRight },
+    { key: 'Shift-ArrowUp',    run: selLineUp },
+    { key: 'Shift-ArrowDown',  run: selLineDown },
+    { key: 'Shift-Home',       mac: 'Meta-Shift-ArrowLeft',  run: selLineStart },
+    { key: 'Shift-End',        mac: 'Meta-Shift-ArrowRight', run: selLineEnd },
+    { key: 'Mod-Shift-Home',   mac: 'Meta-Shift-ArrowUp',    run: selDocStart },
+    { key: 'Mod-Shift-End',    mac: 'Meta-Shift-ArrowDown',  run: selDocEnd },
+    { key: 'Mod-Shift-ArrowLeft',  mac: 'Alt-Shift-ArrowLeft',  run: selWordLeft },
+    { key: 'Mod-Shift-ArrowRight', mac: 'Alt-Shift-ArrowRight', run: selWordRight },
+    { key: 'Mod-a',            run: selectAllCard },
+    { key: 'Escape',           run: collapseSelectionKey },
+  ];
+
+  var KEYMAP = (function () {
+    var map = {};
+    for (var i = 0; i < BINDINGS.length; i++) {
+      var b = BINDINGS[i];
+      var chord = resolveChord(IS_MAC && b.mac ? b.mac : b.key);
+      map[chord] = b.run;
+    }
+    return map;
+  })();
+
+  // When focus comes back to the webview - returning from an undo that had
+  // to focus the editor, for instance - typing should just work again
+  // without a re-click, so put focus back in the catcher if we are armed.
+  window.addEventListener('focus', function () {
+    if (caretOffset !== null && typeCatcher) {
+      typeCatcher.focus({ preventScroll: true });
+    }
+  });
+
+  document.addEventListener('keydown', function (e) {
+    // Never fight an active IME: mutating the DOM mid-composition aborts it.
+    if (e.isComposing || e.keyCode === 229) { return; }
+
+    // Typing over a selection (issue #1). A printable key (or Enter) with
+    // an active selection replaces it in ONE edit - the extension styles
+    // the replacement to match the spot, and one Ctrl+Z restores the lot.
+    // Handled on keydown so focus never moves and the toolbar selection
+    // flow is untouched. Known limit, documented on the issue: the first
+    // character of an IME composition cannot arrive this way; composed
+    // input replaces nothing and simply inserts after the user deletes.
+    if (!e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key.length === 1 || e.key === 'Enter')) {
+      var typeOverSel = resolveSelectionOffsets();
+      if (typeOverSel !== null && typeOverSel.start !== typeOverSel.end) {
+        e.preventDefault();
+        vscode.postMessage({
+          type: 'replaceText',
+          start: typeOverSel.start,
+          end: typeOverSel.end,
+          text: e.key === 'Enter' ? '\n' : e.key
+        });
+        collapseKbdSelection();
+        var native = window.getSelection();
+        if (native && !native.isCollapsed) { native.removeAllRanges(); }
+        // The extension advances the caret past the styled replacement and
+        // echoes it; arm locally at the start so fast follow-up keys land
+        // in order rather than being dropped.
+        caretOffset = typeOverSel.start;
+        typeCatcher.focus({ preventScroll: true });
+        return;
+      }
+    }
+    var run = KEYMAP[chordOf(e)];
+    if (!run) { return; }
+    if (run() !== false) { e.preventDefault(); }
+  });
 })();

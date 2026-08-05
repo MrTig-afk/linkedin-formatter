@@ -2,7 +2,7 @@ import type { CombiningMark } from './types';
 import { MATH_STYLE_BY_ID } from './styles';
 import { NON_MATH_STYLE_BY_ID } from './palettes';
 import { COMBINING_MARKS, applyCombiningMark, stripCombiningMark } from './combining';
-import { detectFormatting, styledCodePoint } from './convert';
+import { detectFormatting, styledCodePoint, inheritedStyleAt } from './convert';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -449,4 +449,43 @@ export function toggleAxis(text: string, axis: Axis, activeFamily: FamilyId): st
     result = applyCombiningMark(result, mark);
   }
   return result;
+}
+
+/**
+ * What style should text TYPED at `offset` receive?
+ *
+ * The Word model, made explicit:
+ *
+ *   1. Formatting follows the run being typed into. The character before the
+ *      caret decides (skipping whitespace); at the start of a run, the
+ *      character after it does.
+ *   2. A pending axis override - the user pressed Ctrl+B at this caret -
+ *      beats inheritance for that axis only. Pressing bold inside a bold run
+ *      turns typing plain; pressing it in plain text turns typing bold.
+ *   3. With nothing to inherit and nothing pending, the toolbar family is
+ *      the fallback.
+ *
+ * Returns a style id, or 'plain'. Pure, so the whole matrix is unit-testable
+ * without a webview or an editor.
+ */
+export function resolveTypingStyle(
+  fullText: string,
+  offset: number,
+  pendingBold: boolean | null,
+  pendingItalic: boolean | null,
+  fallbackFamily: FamilyId,
+  pendingFamily: FamilyId | null = null,
+): string {
+  const inherited = inheritedStyleAt(fullText, offset);
+  const base = inherited !== null ? decompose(inherited.id) : null;
+
+  // An explicit dropdown pick at a collapsed caret beats inheritance, the
+  // way choosing a font in Word does: the very next thing typed uses it.
+  // Without this, picking fullwidth on a fresh line was silently ignored
+  // because the empty line inherited plain from the paragraph above.
+  const family = pendingFamily ?? (base !== null ? base.family : fallbackFamily);
+  const bold = pendingBold ?? (base !== null ? base.bold : false);
+  const italic = pendingItalic ?? (base !== null ? base.italic : false);
+
+  return nearestSupported(family, bold, italic).styleIdOrPlain;
 }

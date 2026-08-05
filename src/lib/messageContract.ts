@@ -55,6 +55,84 @@ export interface UndoRedoMessage {
 }
 
 /**
+ * v2 (PRD S7.4, M4.1): text typed directly into the preview card.
+ *
+ * The webview captures keystrokes in a hidden input rather than making the
+ * card contenteditable, so the card's DOM stays generated-once-per-render
+ * and the browser never becomes a second writer to it (PRD Q1).
+ *
+ * `text` is what the user typed, `offset` is where it goes. Both are
+ * untrusted: typing produces far more messages than styling ever did, and
+ * the boundary does not get looser because it is busier.
+ */
+export interface InsertTextMessage {
+  readonly type: 'insertText';
+  readonly text: string;    // 1..MAX_INSERT_TEXT_LENGTH UTF-16 code units
+  readonly offset: number;  // UTF-16 code unit offset, 0-based
+}
+
+/**
+ * Upper bound on a single insert. A keystroke is one or two code units; a
+ * composition commit or paste is longer. Anything past this is not a human
+ * typing, so it is refused rather than clamped - a truncated paste would be
+ * worse than a rejected one.
+ */
+export const MAX_INSERT_TEXT_LENGTH = 10_000;
+
+/**
+ * v2 (PRD S7.4, M4.3): replace a document range.
+ *
+ * Covers backspace, delete, and typing over a selection as ONE edit rather
+ * than a delete followed by an insert. Two edits would land as two entries on
+ * the undo stack, so a single Ctrl+Z would half-undo the change and leave the
+ * document in a state the user never typed.
+ *
+ * `text` may be empty - that is a pure deletion. `insertText` remains the
+ * collapsed-caret path; this one always carries a range.
+ */
+export interface ReplaceTextMessage {
+  readonly type: 'replaceText';
+  readonly start: number;   // UTF-16 offset, 0-based
+  readonly end: number;     // UTF-16 offset, start <= end
+  readonly text: string;    // '' to delete; up to MAX_INSERT_TEXT_LENGTH
+}
+
+/**
+ * The card caret moved, reported IMMEDIATELY.
+ *
+ * Distinct from cursorSync, which is deferred 200ms (to avoid fighting a
+ * double-click) and also moves the LEFT editor. This one only tells the
+ * extension where the card caret is.
+ *
+ * It exists because the two sides were desynchronised: the webview armed its
+ * caret on click but the extension only heard 200ms later, and never heard
+ * about arrow-key movement at all. Typing in that window inserted text at
+ * wherever the extension last believed the caret was.
+ */
+export interface SetCaretMessage {
+  readonly type: 'setCaret';
+  readonly offset: number;
+  /**
+   * Which side of a soft-wrap the caret sticks to. At a wrap point the
+   * offset alone is ambiguous - end-of-this-line and start-of-next-line are
+   * THE SAME offset - so without this the caret draws on the wrong line
+   * after End, and after typing at a wrap boundary. 'before' leans on the
+   * character behind the caret; 'after' (the default) on the one ahead.
+   */
+  readonly assoc?: 'before' | 'after';
+}
+
+/**
+ * The card caret disarmed - a drag-selection started, or the user clicked
+ * away. Without this the extension keeps the LAST caret it heard about and
+ * quietly inserts the next emoji or edit there, which is how emoji ended up
+ * landing several lines above where the user was looking.
+ */
+export interface ClearCaretMessage {
+  readonly type: 'clearCaret';
+}
+
+/**
  * The webview's current text selection, reported on mouseup so the
  * extension can keep it highlighted across re-renders and reflect its
  * family/axes in the toolbar. start === end means no selection.
@@ -70,9 +148,13 @@ export type WebviewMessage =
   | ClearFormattingMessage
   | CursorSyncMessage
   | InsertEmojiMessage
+  | InsertTextMessage
+  | ReplaceTextMessage
   | SetFamilyMessage
   | ConvertFamilyMessage
   | ToggleAxisMessage
+  | SetCaretMessage
+  | ClearCaretMessage
   | SelectionStateMessage
   | UndoRedoMessage;
 

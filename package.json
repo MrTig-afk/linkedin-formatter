@@ -89,6 +89,18 @@
         "key": "alt+shift+5",
         "mac": "alt+shift+5",
         "when": "editorTextFocus && editorLangId == 'linkedin'"
+      },
+      {
+        "command": "linkedinFormatter.toggleBold",
+        "key": "ctrl+b",
+        "mac": "cmd+b",
+        "when": "activeWebviewPanelId == 'linkedinFormatter.preview'"
+      },
+      {
+        "command": "linkedinFormatter.toggleItalic",
+        "key": "ctrl+i",
+        "mac": "cmd+i",
+        "when": "activeWebviewPanelId == 'linkedinFormatter.preview'"
       }
     ],
     "configuration": {

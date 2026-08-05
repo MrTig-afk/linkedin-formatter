@@ -7,6 +7,7 @@ import {
   removeStyle,
   detectStyle,
   detectFormatting,
+  applyStyleForTyping,
 } from '../../src/lib/convert';
 import type { DetectedFormat } from '../../src/lib/convert';
 import { MATH_STYLE_BY_ID } from '../../src/lib/styles';
@@ -332,4 +333,26 @@ test('detectFormatting italic h exception 0x210E with underline mark: style ital
   assert.equal(entries[0].marks.length, 1);
   assert.equal(entries[0].marks[0], UNDERLINE);
   assert.equal(entries[0].plain, 'h');
+});
+
+// ---------------------------------------------------------------------------
+// applyStyleForTyping: typing case-folds where the style demands it
+// ---------------------------------------------------------------------------
+
+test('typing lowercase into an uppercase-only style folds up, not through', () => {
+  const squared = NON_MATH_STYLE_BY_ID.get('squared')!;
+  const out = applyStyleForTyping('abc', squared);
+  assert.equal(out, applyStyle('ABC', squared),
+    'lowercase typed in a squared run must become squared capitals');
+  assert.ok(!/[a-z]/.test(out), 'no plain lowercase may leak through');
+});
+
+test('typing uppercase into parenthesized (lowercase-only) folds down', () => {
+  const par = NON_MATH_STYLE_BY_ID.get('parenthesized')!;
+  assert.equal(applyStyleForTyping('ABC', par), applyStyle('abc', par));
+});
+
+test('full-coverage styles keep the typed case exactly', () => {
+  const bold = MATH_STYLE_BY_ID.get('bold')!;
+  assert.equal(applyStyleForTyping('AbC', bold), applyStyle('AbC', bold));
 });

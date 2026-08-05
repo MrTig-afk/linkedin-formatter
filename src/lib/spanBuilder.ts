@@ -21,115 +21,124 @@ export interface TruncationMarker {
 }
 
 /**
- * Build HTML where each visual unit (code point plus any trailing combining
- * marks) is wrapped in a <span> carrying its UTF-16 document offset and
- * UTF-16 length.
+ * One item in the rendered stream: either a text unit (a code point plus any
+ * trailing combining marks) carrying its UTF-16 document offset and length, or
+ * a truncation marker.
  *
- * When `markers` are supplied, a labelled horizontal-rule div is injected
- * between spans at each marker's code-point position. Markers are only
- * injected when the text exceeds the position (there must be content after
- * the cutoff). The marker elements carry no data-offset/data-len attributes
- * and are inert to the toolbar selection logic.
+ * This is the single source of truth for what the preview shows. The HTML
+ * string path and the message path to the webview both derive from it, so
+ * the two can never disagree about an offset.
+ */
+export type RenderUnit =
+  | { readonly kind: 'span'; readonly offset: number; readonly len: number; readonly text: string }
+  | { readonly kind: 'marker'; readonly label: string };
+
+/**
+ * Split text into render units, interleaving truncation markers.
+ *
+ * @param text    - raw document text (NOT escaped; escaping is the caller's job
+ *                  only on the HTML path - the message path never needs it)
+ * @param markers - optional truncation markers
+ */
+/**
+ * Split text into user-perceived characters (Unicode grapheme clusters).
+ *
+ * The previous rule - "a code point plus any trailing General_Category=M
+ * marks" - handled accents and the combining strike/underline marks, but not
+ * the three cases that matter for emoji:
+ *
+ *   family     U+1F469 ZWJ U+1F469 ZWJ U+1F467 ZWJ U+1F467   -> 7 units
+ *   skin tone  U+1F476 U+1F3FE                                -> 2 units
+ *   flag       U+1F1EC U+1F1E7                                -> 2 units
+ *
+ * ZWJ is General_Category=Cf and the modifiers/regional indicators are So,
+ * so none of them were grouped. Backspace then deleted one component and
+ * left a mangled emoji - the same defect VS Code has carried since 2017.
+ *
+ * Intl.Segmenter implements UAX #29 properly and ships in every runtime this
+ * code targets. The fallback exists only so a missing implementation
+ * degrades to the old behaviour rather than throwing.
+ */
+function graphemes(text: string): string[] {
+  const Segmenter = (Intl as { Segmenter?: new (l?: string, o?: { granularity: string }) => {
+    segment(s: string): Iterable<{ segment: string }>;
+  } }).Segmenter;
+
+  if (typeof Segmenter === 'function') {
+    const out: string[] = [];
+    for (const { segment } of new Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
+      out.push(segment);
+    }
+    return out;
+  }
+
+  // Fallback: code point plus trailing combining marks (the old rule).
+  const out: string[] = [];
+  for (const ch of text) {
+    if (out.length > 0 && isCombiningMark(ch)) {
+      out[out.length - 1] += ch;
+    } else {
+      out.push(ch);
+    }
+  }
+  return out;
+}
+
+export function buildOffsetUnits(text: string, markers?: TruncationMarker[]): RenderUnit[] {
+  const units: RenderUnit[] = [];
+  if (text.length === 0) { return units; }
+
+  // Markers are only shown when there is content after the cutoff.
+  const totalCp = (!markers || markers.length === 0) ? 0 : [...text].length;
+  const sortedMarkers = (!markers || markers.length === 0)
+    ? []
+    : markers.slice().sort((a, b) => a.position - b.position)
+        .filter(m => m.position < totalCp);
+
+  let utf16Offset = 0;
+  // cpCount counts CODE POINTS placed so far, because truncation marker
+  // positions are specified in code points (PRD S5.7), not graphemes or
+  // UTF-16 units. Changing that would move the "see more" markers.
+  let cpCount = 0;
+  let markerIdx = 0;
+
+  for (const cluster of graphemes(text)) {
+    units.push({
+      kind: 'span',
+      offset: utf16Offset,
+      len: cluster.length,
+      text: cluster,
+    });
+    utf16Offset += cluster.length;
+    cpCount += [...cluster].length;
+
+    while (markerIdx < sortedMarkers.length &&
+           sortedMarkers[markerIdx].position <= cpCount) {
+      units.push({ kind: 'marker', label: sortedMarkers[markerIdx].label });
+      markerIdx++;
+    }
+  }
+
+  return units;
+}
+
+/**
+ * Build HTML where each visual unit is wrapped in a <span> carrying its UTF-16
+ * document offset and length, with labelled truncation markers injected
+ * between spans at each marker's code-point position.
+ *
+ * Serialises buildOffsetUnits. Behaviour is unchanged from before that split.
  *
  * @param text - raw document text (NOT pre-escaped)
- * @param markers - optional truncation markers; omitting is backward-compatible
+ * @param markers - optional truncation markers
  * @returns HTML string safe for interpolation into the preview body.
  *          Each unit: <span data-offset="N" data-len="L">escaped-text</span>
  *          Empty input returns empty string.
  */
 export function buildOffsetSpans(text: string, markers?: TruncationMarker[]): string {
-  if (text.length === 0) {
-    return '';
-  }
-
-  // Fast path: no markers -- run the original loop with no overhead.
-  if (!markers || markers.length === 0) {
-    let result = '';
-    let utf16Offset = 0;
-    let unitText = '';
-    let unitOffset = 0;
-    let unitLen = 0;
-    let hasUnit = false;
-
-    for (const ch of text) {
-      if (isCombiningMark(ch) && hasUnit) {
-        unitText += ch;
-        unitLen += ch.length;
-      } else {
-        if (hasUnit) {
-          result += `<span data-offset="${unitOffset}" data-len="${unitLen}">${escapeHtml(unitText)}</span>`;
-        }
-        unitText = ch;
-        unitOffset = utf16Offset;
-        unitLen = ch.length;
-        hasUnit = true;
-      }
-      utf16Offset += ch.length;
-    }
-    if (hasUnit) {
-      result += `<span data-offset="${unitOffset}" data-len="${unitLen}">${escapeHtml(unitText)}</span>`;
-    }
-    return result;
-  }
-
-  // Count total code points (text is at most 3,000 chars -- negligible).
-  const totalCp = [...text].length;
-
-  // Sort ascending; filter out markers at or beyond the total (marker only
-  // shown when text exceeds the position -- there must be content after it).
-  const sortedMarkers = markers
-    .slice()
-    .sort((a, b) => a.position - b.position)
-    .filter(m => m.position < totalCp);
-
-  let result = '';
-  let utf16Offset = 0;
-  let unitText = '';
-  let unitOffset = 0;
-  let unitLen = 0;
-  let hasUnit = false;
-  // cpCount tracks how many code points have been placed into units (flushed
-  // or the current in-progress unit). It lags behind the loop iterator by one
-  // base character so that the marker check fires AFTER the correct unit.
-  let cpCount = 0;
-  let markerIdx = 0;
-
-  for (const ch of text) {
-    if (isCombiningMark(ch) && hasUnit) {
-      // Combining mark: append to current unit, count the code point.
-      unitText += ch;
-      unitLen += ch.length;
-      cpCount++;
-    } else {
-      // Base character: flush the previous unit first (if any), then check
-      // whether any marker position has been crossed.
-      if (hasUnit) {
-        result += `<span data-offset="${unitOffset}" data-len="${unitLen}">${escapeHtml(unitText)}</span>`;
-        while (markerIdx < sortedMarkers.length &&
-               sortedMarkers[markerIdx].position <= cpCount) {
-          result += `<div class="truncation-marker"><span class="truncation-label">${escapeHtml(sortedMarkers[markerIdx].label)}</span></div>`;
-          markerIdx++;
-        }
-      }
-      // Start a new unit for this base character.
-      unitText = ch;
-      unitOffset = utf16Offset;
-      unitLen = ch.length;
-      hasUnit = true;
-      cpCount++;
-    }
-    utf16Offset += ch.length;
-  }
-
-  // Flush the last unit and check for any remaining markers.
-  if (hasUnit) {
-    result += `<span data-offset="${unitOffset}" data-len="${unitLen}">${escapeHtml(unitText)}</span>`;
-    while (markerIdx < sortedMarkers.length &&
-           sortedMarkers[markerIdx].position <= cpCount) {
-      result += `<div class="truncation-marker"><span class="truncation-label">${escapeHtml(sortedMarkers[markerIdx].label)}</span></div>`;
-      markerIdx++;
-    }
-  }
-
-  return result;
+  return buildOffsetUnits(text, markers).map(u =>
+    u.kind === 'span'
+      ? `<span data-offset="${u.offset}" data-len="${u.len}">${escapeHtml(u.text)}</span>`
+      : `<div class="truncation-marker"><span class="truncation-label">${escapeHtml(u.label)}</span></div>`
+  ).join('');
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { isCombiningMark, buildOffsetSpans, type TruncationMarker } from '../../src/lib/spanBuilder';
+import { isCombiningMark, buildOffsetSpans, buildOffsetUnits, type TruncationMarker } from '../../src/lib/spanBuilder';
 
 function parseSpans(html: string): Array<{ offset: number; len: number; content: string }> {
   const spans: Array<{ offset: number; len: number; content: string }> = [];
@@ -271,4 +271,65 @@ test('buildOffsetSpans marker divs carry no data-offset or data-len (inert for c
   const markerHtml = output.slice(markerStart, markerEnd + 6);
   assert.ok(!markerHtml.includes('data-offset'), 'marker div must not carry data-offset attribute');
   assert.ok(!markerHtml.includes('data-len'), 'marker div must not carry data-len attribute');
+});
+
+// ---------------------------------------------------------------------------
+// Grapheme clusters (UAX #29)
+//
+// A span is one USER-PERCEIVED character. Deletion and arrow motion both use
+// span ranges, so a span that splits an emoji lets backspace destroy half of
+// it - the defect VS Code has carried since 2017 (microsoft/vscode#22486).
+// ---------------------------------------------------------------------------
+
+const spansOf = (text: string) =>
+  buildOffsetUnits(text).filter(u => u.kind === 'span');
+
+test('a ZWJ emoji family is ONE span, not seven', () => {
+  const family = '\u{1F469}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F467}';
+  const spans = spansOf(family);
+  assert.equal(spans.length, 1, `family split into ${spans.length} spans`);
+  assert.equal((spans[0] as { text: string }).text, family);
+  assert.equal((spans[0] as { len: number }).len, family.length);
+});
+
+test('a skin-tone modifier stays with its base emoji', () => {
+  const baby = '\u{1F476}\u{1F3FE}';
+  assert.equal(spansOf(baby).length, 1);
+});
+
+test('a regional-indicator flag is one span', () => {
+  const flag = '\u{1F1EC}\u{1F1E7}';
+  assert.equal(spansOf(flag).length, 1);
+});
+
+test('combining marks still group with their base (no regression)', () => {
+  assert.equal(spansOf('e\u0301').length, 1, 'e + acute');
+  assert.equal(spansOf('a\u0336b\u0336').length, 2, 'struck a, struck b');
+});
+
+test('styled astral characters remain one span each', () => {
+  assert.equal(spansOf('\u{1D400}\u{1D401}').length, 2, 'math bold A, B');
+});
+
+test('offsets stay exact UTF-16 positions and reconstruct the input', () => {
+  const text = 'ab' + '\u{1F469}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F467}' + 'cd';
+  const spans = spansOf(text) as Array<{ offset: number; len: number; text: string }>;
+  assert.equal(spans.map(s => s.text).join(''), text, 'must reconstruct exactly');
+  let expected = 0;
+  for (const s of spans) {
+    assert.equal(s.offset, expected, 'offset must be the running UTF-16 position');
+    assert.equal(s.len, s.text.length);
+    expected += s.len;
+  }
+  assert.equal(expected, text.length);
+});
+
+test('every span boundary is a valid grapheme boundary', () => {
+  // The invariant deletion and arrow motion depend on: no span may start or
+  // end inside a user-perceived character.
+  const text = 'Hi ' + '\u{1F469}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F467}' + ' \u{1F476}\u{1F3FE} e\u0301 \u{1D400} done';
+  const spans = spansOf(text) as Array<{ text: string }>;
+  const seg = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)]
+    .map(x => x.segment);
+  assert.deepEqual(spans.map(s => s.text), seg);
 });

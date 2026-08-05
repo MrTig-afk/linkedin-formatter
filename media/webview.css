@@ -86,10 +86,15 @@ body.theme-editor {
 }
 
 body {
-  /* The symbol/emoji tail gives glyphs to enclosed alphanumerics
+  /* The symbol and emoji faces come BEFORE the generic family. A generic
+     like sans-serif always resolves to a concrete font, and if that font
+     carries a monochrome glyph for an emoji it wins - the colour face
+     further down the list is never consulted, so emoji render as flat
+     outlines. The symbol faces also supply the enclosed alphanumerics
      (circled, squared, parenthesized) that text faces lack. */
-  font-family: -apple-system, "Segoe UI", Roboto, sans-serif,
-    "Segoe UI Symbol", "Segoe UI Emoji", "Noto Sans Symbols 2", "Noto Color Emoji";
+  font-family: "Enclosed Alphanumerics Text", -apple-system, "Segoe UI", Roboto,
+    "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji",
+    "Segoe UI Symbol", "Noto Sans Symbols 2", sans-serif;
   background: var(--canvas);
   /* Column stack: toolbar on top, card filling the pane below, counter
      last. A row here lays the toolbar out BESIDE the card. */
@@ -383,14 +388,16 @@ body {
   background: var(--active);
 }
 
-/* Pressed state: the selection uniformly carries this axis. */
-.axis-btn.active {
+/* Pressed state: the selection uniformly carries this axis or mark. */
+.axis-btn.active,
+.mark-btn.active {
   background: var(--accent-soft);
   color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent-ring);
 }
 
-.axis-btn:disabled {
+.axis-btn:disabled,
+.mark-btn:disabled {
   opacity: 0.3;
   cursor: default;
 }
@@ -514,12 +521,20 @@ body {
 }
 
 .emoji-picker {
-  max-width: 555px;
-  width: 100%;
-  margin: 0 auto 12px;
+  /* Overlay pinned under the sticky toolbar. In flow, the picker opened at
+     its markup position near the TOP of the document - scroll a long post
+     and the button stays pinned while the picker opens hundreds of pixels
+     above the viewport, i.e. invisibly. Fixed tracks the toolbar at any
+     scroll position and shifts no layout. */
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(555px, calc(100% - 32px));
+  z-index: 20;
   background: var(--card);
   border-radius: 8px;
-  box-shadow: 0 0 0 1px var(--line), 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 0 0 1px var(--line), 0 4px 12px rgba(0, 0, 0, 0.35);
   max-height: 320px;
   display: flex;
   flex-direction: column;
@@ -581,4 +596,121 @@ body {
 
 .emoji-item:hover {
   background: var(--hover);
+}
+
+/* --- M4.1 type catcher --- */
+
+/*
+ * Focusable but invisible. Deliberately NOT display:none or visibility:hidden,
+ * neither of which can receive focus, and not width:0 either - some engines
+ * refuse focus on a zero-area element. 1px, transparent, behind the card.
+ */
+.type-catcher {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  opacity: 0;
+  z-index: -1;
+  background: transparent;
+  color: transparent;
+}
+
+/* --- Typing interrupted (M4.5 cue) ---
+
+   An edit arrived from outside the preview - an AI CLI writing the file, an
+   undo, or typing in the left editor - so the offset this webview was holding
+   is stale and typing has disarmed. Without a visible cue the stop is silent:
+   you keep typing and the characters go nowhere until you happen to click.
+
+   Deliberately brief and non-modal. It reports something that already
+   happened; it must not sit there demanding to be dismissed. */
+.linkedin-card.typing-interrupted {
+  animation: typing-interrupted-flash 600ms ease-out 1;
+}
+
+@keyframes typing-interrupted-flash {
+  0%   { box-shadow: inset 0 0 0 2px var(--accent); }
+  70%  { box-shadow: inset 0 0 0 2px var(--accent); }
+  100% { box-shadow: inset 0 0 0 2px transparent; }
+}
+
+/* Respect a reduced-motion preference: keep the signal, drop the animation. */
+@media (prefers-reduced-motion: reduce) {
+  .linkedin-card.typing-interrupted {
+    animation: none;
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+}
+
+/* --- Card caret (M4) ---
+
+   Shown at the armed typing position while the CARD has focus. Distinct from
+   .caret-marker, which mirrors the left editor's cursor and only appears when
+   the EDITOR is focused - clicking into the card blurs the editor, so that one
+   vanishes exactly when you start typing. Without this you cannot tell whether
+   the card is ready to receive keystrokes. */
+.card-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin: 0 -1px;
+  /* Text colour, not the brand accent. A caret is part of the text, and a
+     blue one reads as a UI element sitting in the prose. */
+  background: var(--ink);
+  vertical-align: text-bottom;
+  user-select: none;
+  /* The caret sits EXACTLY where the user just clicked - and where they
+     double-click next. If it takes the mousedown, Chromium anchors the
+     word-selection in a non-selectable element and no selection forms:
+     "double click does not select at all". Let clicks pass through to
+     the text underneath. */
+  pointer-events: none;
+  animation: card-caret-blink 1.06s steps(1, end) infinite;
+}
+
+@keyframes card-caret-blink {
+  0%, 50%   { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
+/* A steady caret still communicates "armed" without the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .card-caret { animation: none; opacity: 1; }
+}
+
+/* --- Keyboard selection (feat/keyboard-selection) ---
+
+   Painted by toggling this class on offset spans, because the native
+   selection cannot extend while focus sits in the hidden input. Same colour
+   as ::selection so mouse and keyboard selections are indistinguishable. */
+span.kbd-selected {
+  background: var(--selection);
+}
+
+/* --- Enclosed alphanumerics render as text, never as emoji ---
+
+   A handful of the enclosed letters double as emoji: negative-squared A/B/O/P
+   are the blood-type emoji, circled M is the metro sign. Once the colour
+   emoji faces moved ahead of the generic family (needed so real emoji render
+   in colour), those letters started appearing as red emoji glyphs in the
+   middle of styled words.
+
+   This face claims ONLY the enclosed-alphanumeric ranges and maps them to the
+   monochrome symbol font, so a negative-squared A matches the rest of its
+   alphabet while actual emoji stay colourful. local() fails harmlessly on
+   systems without the font and the normal stack takes over. */
+@font-face {
+  font-family: "Enclosed Alphanumerics Text";
+  src: local("Segoe UI Symbol");
+  /* Enclosed alphanumerics ONLY - the blocks emoji fonts try to claim.
+     Fullwidth (U+FF10-FF5A) must NOT be here: Segoe UI Symbol has no
+     fullwidth glyphs, so routing it here turned any fullwidth character
+     carrying a combining mark into an all-tofu cluster ("empty boxes"). */
+  unicode-range: U+2460-24EA, U+2474-247C, U+249C-24B5,
+                 U+1F130-1F149, U+1F170-1F189;
 }

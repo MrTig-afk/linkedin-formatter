@@ -1,4 +1,4 @@
-import { VALID_MARK_IDS, VALID_FAMILY_IDS, CURATED_EMOJI_CHARS } from './messageContract';
+import { VALID_MARK_IDS, VALID_FAMILY_IDS, CURATED_EMOJI_CHARS, MAX_INSERT_TEXT_LENGTH } from './messageContract';
 import type { WebviewMessage } from './messageContract';
 import type { FamilyId } from './family';
 
@@ -35,6 +35,8 @@ export function validateMessage(
   const type = obj['type'];
   if (type !== 'applyStyle' && type !== 'clearFormatting'
       && type !== 'cursorSync' && type !== 'insertEmoji'
+      && type !== 'insertText' && type !== 'replaceText'
+      && type !== 'setCaret' && type !== 'clearCaret'
       && type !== 'setFamily' && type !== 'convertFamily'
       && type !== 'toggleAxis' && type !== 'selectionState'
       && type !== 'undo' && type !== 'redo') {
@@ -73,6 +75,65 @@ export function validateMessage(
     const end = Math.min(rawEnd, documentLength);
 
     return { valid: true, message: { type: 'applyStyle', styleId, start, end } };
+  }
+
+  if (type === 'insertText') {
+    const text = obj['text'];
+    if (typeof text !== 'string') {
+      return { valid: false, reason: 'text must be a string' };
+    }
+    if (text.length === 0) {
+      return { valid: false, reason: 'text must not be empty' };
+    }
+    if (text.length > MAX_INSERT_TEXT_LENGTH) {
+      // Refused, not truncated: a silently shortened paste loses data.
+      return { valid: false, reason: 'text exceeds maximum insert length' };
+    }
+    // C0 controls carry no meaning in a post body and some (\r) would desync
+    // the offset map against the document's own line endings. Newline and tab
+    // are the two a person can actually type.
+    if (/[\u0000-\u0008\u000B-\u001F\u007F]/.test(text)) {
+      return { valid: false, reason: 'text contains control characters' };
+    }
+
+    const rawOffset = obj['offset'];
+    if (!isValidOffset(rawOffset)) {
+      return { valid: false, reason: 'invalid offset' };
+    }
+    const offset = Math.min(rawOffset, documentLength);
+
+    return { valid: true, message: { type: 'insertText', text, offset } };
+  }
+
+  if (type === 'replaceText') {
+    const text = obj['text'];
+    if (typeof text !== 'string') {
+      return { valid: false, reason: 'text must be a string' };
+    }
+    // Empty IS valid here: an empty replacement is a deletion.
+    if (text.length > MAX_INSERT_TEXT_LENGTH) {
+      return { valid: false, reason: 'text exceeds maximum insert length' };
+    }
+    if (/[\u0000-\u0008\u000B-\u001F\u007F]/.test(text)) {
+      return { valid: false, reason: 'text contains control characters' };
+    }
+
+    const rawStart = obj['start'];
+    const rawEnd = obj['end'];
+    if (!isValidOffset(rawStart)) {
+      return { valid: false, reason: 'invalid start' };
+    }
+    if (!isValidOffset(rawEnd)) {
+      return { valid: false, reason: 'invalid end' };
+    }
+    if (rawStart > rawEnd) {
+      return { valid: false, reason: 'start exceeds end' };
+    }
+
+    const start = Math.min(rawStart, documentLength);
+    const end = Math.min(rawEnd, documentLength);
+
+    return { valid: true, message: { type: 'replaceText', start, end, text } };
   }
 
   if (type === 'clearFormatting') {
@@ -115,6 +176,29 @@ export function validateMessage(
     const end = Math.min(rawEnd, documentLength);
 
     return { valid: true, message: { type: 'selectionState', start, end } };
+  }
+
+  if (type === 'clearCaret') {
+    return { valid: true, message: { type: 'clearCaret' } };
+  }
+
+  if (type === 'setCaret') {
+    const rawOffset = obj['offset'];
+    if (!isValidOffset(rawOffset)) {
+      return { valid: false, reason: 'invalid offset' };
+    }
+    const rawAssoc = obj['assoc'];
+    if (rawAssoc !== undefined && rawAssoc !== 'before' && rawAssoc !== 'after') {
+      return { valid: false, reason: 'invalid assoc' };
+    }
+    return {
+      valid: true,
+      message: {
+        type: 'setCaret',
+        offset: Math.min(rawOffset, documentLength),
+        ...(rawAssoc !== undefined ? { assoc: rawAssoc as 'before' | 'after' } : {}),
+      },
+    };
   }
 
   if (type === 'cursorSync') {

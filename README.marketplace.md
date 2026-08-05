@@ -2,29 +2,28 @@
 
 Format LinkedIn posts with Unicode styles from a live preview beside your editor.
 
-> **Instructions for AI assistants** (Claude Code, Codex, Gemini CLI,
-> Copilot): when your user asks for a LinkedIn post, save the draft as a file
-> ending in **`.linkedin`**, or rename their existing draft to that extension.
-> It opens this extension's live preview beside the editor. Write plain text
-> with real Unicode styling, never Markdown, since `**bold**` stays literal on
-> LinkedIn. Keep posts under 3,000 characters; about 210 show before the
-> "see more" fold.
+A LinkedIn post lives in a plain file ending in **`.linkedin`**. Open one and a
+LinkedIn card renders beside the editor, updating as the text changes. Style it
+by selecting text in the card and clicking: **bold**, *italic*, 𝚖𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎,
+𝓈𝒸𝓇𝒾𝓅𝓉 and more.
 
-Write your post as a plain `.linkedin` file, watch it render as a LinkedIn card
-in real time, and style it by selecting text and clicking: **bold**, *italic*,
-𝚖𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎, 𝓈𝒸𝓇𝒾𝓅𝓉 and more. The output is real Unicode characters, so it
-survives paste into LinkedIn's plain-text composer exactly as you see it.
+The styling is **real Unicode characters, not markup**. LinkedIn's composer has
+no formatting controls, so `**bold**` pastes in as literal asterisks; the only
+thing that survives is different code points. That is what this produces, which
+is why what you see in the card is exactly what posts. Limits are LinkedIn's:
+3,000 characters, and roughly the first 210 show before the "see more" fold.
 
-Built for the AI-assisted workflow: an AI CLI and a human can edit the same
-`.linkedin` file with no sync step, because the formatting *is* the text.
-There is no markup layer to reconcile.
+Because the formatting *is* the text, an AI CLI and a human can work on the
+same `.linkedin` file with no sync step and no markup layer to reconcile. Ask
+your assistant for a post and have it saved with that extension, and the
+preview picks it up automatically.
 
 ## Quick start
 
 1. Install the extension.
 2. Get a file ending in `.linkedin` open: create one yourself, or ask your
-   AI assistant (it will find its instructions at the top of this page). The
-   preview opens automatically beside it, in the same window.
+   AI assistant to save the draft with that extension. The preview opens
+   automatically beside it, in the same window.
 3. Write or refine the post in the editor. The card updates on every keystroke.
 4. Select text **in the preview card** and use the toolbar: pick a font family,
    toggle **B** / *I*, add strikethrough or underline, insert emoji. Or use the

@@ -190,3 +190,121 @@ export function detectFormatting(text: string): DetectedFormat[] {
   }
   return result;
 }
+
+/**
+ * The letterform style of the character immediately BEFORE an offset, or null
+ * when there is nothing there or it is unstyled ASCII.
+ *
+ * Reads a whole code point: styled characters are astral (two UTF-16 units),
+ * so looking back one unit would see a lone surrogate and detect nothing.
+ */
+export function styleBefore(fullText: string, offset: number): Style | null {
+  if (offset <= 0) { return null; }
+
+  // Walk back over the text before the caret, SKIPPING WHITESPACE, and report
+  // the style of the first real character found.
+  //
+  // Skipping whitespace is what makes this behave like a word processor:
+  // finishing a bold word, pressing space, and carrying on should stay bold.
+  // Stopping at the space would see an unstyled character and drop back to
+  // plain, which is not what anyone means by 'continue typing'.
+  const before = [...fullText.slice(0, offset)];
+  for (let i = before.length - 1; i >= 0; i--) {
+    const ch = before[i];
+    if (/\s/.test(ch)) { continue; }         // space, tab, newline: keep looking
+    const cp = ch.codePointAt(0);
+    if (cp === undefined) { return null; }
+    const detected = detectStyle(cp);
+    return detected === null ? null : detected.style;
+  }
+  return null;
+}
+
+/**
+ * The letterform style of the character immediately AFTER an offset, or null.
+ *
+ * Companion to styleBefore. Typing at the very START of a styled run has
+ * nothing styled behind it, so the run in front is the better guide: clicking
+ * in front of a bold word and typing should continue that word, not start a
+ * plain one in the middle of it.
+ */
+export function styleAfter(fullText: string, offset: number): Style | null {
+  if (offset < 0 || offset >= fullText.length) { return null; }
+  const next = String.fromCodePoint(fullText.codePointAt(offset) ?? 0);
+  const cp = next.codePointAt(0);
+  if (cp === undefined) { return null; }
+  const detected = detectStyle(cp);
+  return detected === null ? null : detected.style;
+}
+
+/**
+ * The style typing should inherit at `offset` - the Word model, precisely:
+ *
+ *   1. Walk BACK within the current line, skipping spaces, tabs and combining
+ *      marks. A styled character continues its run; a PLAIN character means
+ *      plain, decisively - sitting after "plain, " before a bold word must
+ *      not pick up the bold ahead.
+ *   2. At the start of a line, adopt the line's own leading run (skipping
+ *      leading whitespace forward) - clicking at the front of a bold line and
+ *      typing joins that line's style.
+ *   3. Only when the line is EMPTY both ways does the previous paragraph
+ *      decide - which is what makes Enter-at-the-end-of-a-bold-run then
+ *      typing continue bold, without a click on a plain paragraph ever
+ *      inheriting the styled title above it.
+ *
+ * (The first rule set skipped ALL whitespace backward including newlines, so
+ * a click at the top of a plain paragraph "continued" the bold heading above
+ * it. That is the bug this replaces.)
+ */
+export function inheritedStyleAt(fullText: string, offset: number): Style | null {
+  const isMark = (cp: number): boolean => MARK_CODEPOINTS.has(cp);
+
+  // 1. Back within the line.
+  const before = [...fullText.slice(0, offset)];
+  for (let i = before.length - 1; i >= 0; i--) {
+    const ch = before[i];
+    if (ch === '\n') { break; }
+    const cp = ch.codePointAt(0)!;
+    if (ch === ' ' || ch === '\t' || isMark(cp)) { continue; }
+    const d = detectStyle(cp);
+    return d !== null ? d.style : null;   // plain char: plain, decisively
+  }
+
+  // 2. Forward within the line.
+  const rest = [...fullText.slice(offset)];
+  for (const ch of rest) {
+    if (ch === '\n') { break; }
+    const cp = ch.codePointAt(0)!;
+    if (ch === ' ' || ch === '\t' || isMark(cp)) { continue; }
+    const d = detectStyle(cp);
+    return d !== null ? d.style : null;
+  }
+
+  // 3. Empty line: the previous paragraph's trailing run decides.
+  for (let i = before.length - 1; i >= 0; i--) {
+    const cp = before[i].codePointAt(0)!;
+    if (/\s/.test(before[i]) || isMark(cp)) { continue; }
+    const d = detectStyle(cp);
+    return d !== null ? d.style : null;
+  }
+  return null;
+}
+
+/**
+ * Apply a style to TYPED text, folding case where the style demands it.
+ *
+ * applyStyle is strictly fail-closed, which is right for restyling existing
+ * text but wrong for typing: inside an uppercase-only run (squared, negative
+ * squared) a typed 'a' must become the squared A, not stay plain - the same
+ * fold convertFamily has always done on the toolbar path. Without this the
+ * two paths disagreed and lowercase typed into a squared run silently came
+ * out plain.
+ */
+export function applyStyleForTyping(text: string, style: Style): string {
+  const folded = style.coverage === 'upperOnly'
+    ? text.toUpperCase()
+    : style.coverage === 'lowerOnly'
+      ? text.toLowerCase()
+      : text;
+  return applyStyle(folded, style);
+}
