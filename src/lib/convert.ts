@@ -190,3 +190,23 @@ export function detectFormatting(text: string): DetectedFormat[] {
   }
   return result;
 }
+
+/**
+ * The letterform style of the character immediately BEFORE an offset, or null
+ * when there is nothing there or it is unstyled ASCII.
+ *
+ * Reads a whole code point: styled characters are astral (two UTF-16 units),
+ * so looking back one unit would see a lone surrogate and detect nothing.
+ */
+export function styleBefore(fullText: string, offset: number): Style | null {
+  if (offset <= 0) { return null; }
+  // Take a few units back and pick the last WHOLE code point.
+  const window = fullText.slice(Math.max(0, offset - 4), offset);
+  const chars = [...window];
+  const prev = chars[chars.length - 1];
+  if (prev === undefined) { return null; }
+  const cp = prev.codePointAt(0);
+  if (cp === undefined) { return null; }
+  const detected = detectStyle(cp);
+  return detected === null ? null : detected.style;
+}

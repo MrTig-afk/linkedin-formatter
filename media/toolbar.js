@@ -503,6 +503,37 @@
   // Precise offset of a collapsed caret: the span's start plus how far into
   // that span's text node the caret sits. The span offset alone would snap
   // every insert to a span boundary.
+
+  // -------------------------------------------------------------
+  // The card caret.
+  //
+  // .caret-marker mirrors the LEFT editor and only renders while the editor
+  // has focus - which means it disappears the moment you click into the card
+  // to type. So the card draws its own, at the armed offset, whenever typing
+  // is armed. Without it there is no way to tell the card is ready.
+  // -------------------------------------------------------------
+  function clearCardCaret() {
+    var old = body.querySelectorAll('.card-caret');
+    for (var i = 0; i < old.length; i++) { old[i].remove(); }
+  }
+
+  function drawCardCaret() {
+    clearCardCaret();
+    if (caretOffset === null) { return; }
+    var caret = document.createElement('span');
+    caret.className = 'card-caret';
+    caret.setAttribute('aria-hidden', 'true');
+
+    // Place before the span that starts at the offset; if the caret sits at
+    // the very end there is no such span, so append after the last one.
+    var target = body.querySelector('span[data-offset="' + caretOffset + '"]');
+    if (target) {
+      body.insertBefore(caret, target);
+    } else {
+      body.appendChild(caret);
+    }
+  }
+
   function collapsedCaretOffset() {
     var sel = window.getSelection();
     if (!sel || !sel.isCollapsed || sel.rangeCount === 0) { return null; }
@@ -526,10 +557,12 @@
         // keystroke land wherever the caret used to be. Focus stays in the
         // body so the toolbar can still act on the selection.
         caretOffset = null;
+        clearCardCaret();
         return;
       }
       caretOffset = offset;
       typeCatcher.focus({ preventScroll: true });
+      drawCardCaret();
     });
 
     // 'input' fires once per committed change, including at the end of an IME
@@ -636,6 +669,10 @@
       counterEl.className = 'char-counter' +
         (c.state === 'warning' ? ' counter-warning' : over ? ' counter-over' : '');
     }
+
+    // replaceChildren wiped the caret along with the old spans; put it back
+    // at whatever offset is armed now.
+    drawCardCaret();
   }
 
   // Inbound from the extension. Shape-checked before use, same discipline the
@@ -660,6 +697,52 @@
   // CLICK listeners are barred from document (they would swallow toolbar
   // clicks); keydown does not have that problem.
   // ---------------------------------------------------------------
+
+  // -------------------------------------------------------------
+  // Word-wise deletion (Ctrl+Backspace / Ctrl+Delete).
+  //
+  // Boundaries are computed from the rendered spans rather than from the
+  // document text, which the webview does not have. A span is one visual
+  // unit, so this treats a styled character or an emoji as one character -
+  // exactly as single-character deletion does.
+  // -------------------------------------------------------------
+  function offsetSpans() {
+    return Array.prototype.slice.call(body.querySelectorAll('span[data-offset]'));
+  }
+
+  function isSpaceSpan(span) {
+    return /^\s+$/.test(span.textContent || '');
+  }
+
+  /** Start offset of the word ending at `offset`, for Ctrl+Backspace. */
+  function wordStartBefore(offset) {
+    var spans = offsetSpans();
+    var i = spans.length - 1;
+    while (i >= 0 && parseInt(spans[i].dataset.offset, 10) >= offset) { i--; }
+    if (i < 0) { return null; }
+    // Skip the whitespace immediately behind the caret, then the word.
+    while (i >= 0 && isSpaceSpan(spans[i])) { i--; }
+    while (i >= 0 && !isSpaceSpan(spans[i])) { i--; }
+    var start = i < 0 ? 0 : parseInt(spans[i].dataset.offset, 10) +
+                            parseInt(spans[i].dataset.len, 10);
+    return start >= offset ? null : start;
+  }
+
+  /** End offset of the word starting at `offset`, for Ctrl+Delete. */
+  function wordEndAfter(offset) {
+    var spans = offsetSpans();
+    var i = 0;
+    while (i < spans.length && parseInt(spans[i].dataset.offset, 10) < offset) { i++; }
+    if (i >= spans.length) { return null; }
+    while (i < spans.length && isSpaceSpan(spans[i])) { i++; }
+    while (i < spans.length && !isSpaceSpan(spans[i])) { i++; }
+    var end = i >= spans.length
+      ? parseInt(spans[spans.length - 1].dataset.offset, 10) +
+        parseInt(spans[spans.length - 1].dataset.len, 10)
+      : parseInt(spans[i].dataset.offset, 10);
+    return end <= offset ? null : end;
+  }
+
   function spanEndingAt(offset) {
     var spans = body.querySelectorAll('span[data-offset]');
     for (var i = 0; i < spans.length; i++) {
@@ -691,6 +774,23 @@
     }
 
     if (caretOffset === null) { return; }
+
+    // Ctrl (or Cmd) widens the deletion to a whole word.
+    if (e.ctrlKey || e.metaKey) {
+      var wordFrom = e.key === 'Backspace'
+        ? wordStartBefore(caretOffset)
+        : caretOffset;
+      var wordTo = e.key === 'Backspace'
+        ? caretOffset
+        : wordEndAfter(caretOffset);
+      if (wordFrom === null || wordTo === null || wordFrom >= wordTo) { return; }
+      e.preventDefault();
+      vscode.postMessage({
+        type: 'replaceText', start: wordFrom, end: wordTo, text: ''
+      });
+      if (e.key === 'Backspace') { caretOffset = wordFrom; }
+      return;
+    }
 
     var range = e.key === 'Backspace'
       ? spanEndingAt(caretOffset)

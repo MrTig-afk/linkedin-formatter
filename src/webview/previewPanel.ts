@@ -6,7 +6,7 @@ import { validateMessage } from '../lib/validateMessage';
 import type { WebviewMessage } from '../lib/messageContract';
 import { toggleStyle, clearAllFormatting, snapToCodePointBoundary } from '../lib/toggleStyle';
 import { convertFamily, toggleAxis, summarizeSelection, effectiveFamily, nearestSupported, FAMILY_IDS, FAMILY_MATRIX, type FamilyId } from '../lib/family';
-import { ALL_STYLES, applyStyle } from '../lib/convert';
+import { ALL_STYLES, applyStyle, styleBefore } from '../lib/convert';
 import { countCharacters, getCounterState, LINKEDIN_POST_LIMIT, type CountingUnit } from '../lib/charCount';
 import { parseGitConfig, initialsOf, type GitIdentity } from '../lib/identity';
 import * as os from 'node:os';
@@ -357,9 +357,18 @@ export class PreviewPanel {
       // whichever axes are latched. nearestSupported cascades when the
       // family cannot express the intent (monospace has no bold): exact ->
       // drop italic -> drop bold -> regular. It always resolves.
+      // Continue the run being typed into: the style of the character before
+      // the caret wins, so typing at the end of a bold word stays bold and
+      // typing inside script stays script.
+      //
+      // The toolbar is the FALLBACK, not the override - it applies at the
+      // start of a document, after plain text, or wherever there is nothing to
+      // inherit. Otherwise picking a family would silently re-style text the
+      // user is only appending to.
+      const inherited = styleBefore(doc.getText(), message.offset);
       const resolved = nearestSupported(
         this._activeFamily, this._activeBold, this._activeItalic);
-      const style = ALL_STYLES.find(s => s.id === resolved.styleIdOrPlain);
+      const style = inherited ?? ALL_STYLES.find(s => s.id === resolved.styleIdOrPlain);
       const styled = style === undefined
         ? message.text                       // regular serif IS plain ASCII
         : applyStyle(message.text, style);
