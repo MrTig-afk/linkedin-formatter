@@ -55,11 +55,10 @@ Then create any file ending in `.linkedin` and the preview opens by itself.
 
 ## Roadmap
 
-- **MCP integration.** The conversion core as a Model Context Protocol
-  server (and a CLI), so AI agents can produce styled `.linkedin` files
-  directly instead of learning the trick from the listing.
 - **Editing in the preview pane.** Type into the rendered card itself, not
-  only the left editor, making the preview a full two-way surface.
+  only the left editor, making the preview a full two-way surface. Text you
+  type on the right lands in the file on the left, already in real Unicode,
+  in whichever family the toolbar is set to.
 
 ## Under the hood
 
