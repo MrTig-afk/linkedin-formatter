@@ -149,7 +149,7 @@ test('CHANGELOG, when present, has [Unreleased] plus the released 1.0.0 section'
 
 test('package.json carries the marketplace publisher and release version', () => {
   assert.strictEqual(pkg.publisher, 'kaushiknaru');
-  assert.strictEqual(pkg.version, '1.0.2');
+  assert.strictEqual(pkg.version, '1.1.0');
 });
 
 // ---------------------------------------------------------------------------
