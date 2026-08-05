@@ -664,6 +664,36 @@
     }, 700);
   }
 
+
+  /**
+   * Apply toolbar state from a render message.
+   *
+   * This exists so latching bold does not have to rebuild the page. The
+   * toolbar used to be baked into the HTML, so any change to it triggered a
+   * full reload - which destroyed focus and the caret, and left the user
+   * pressing Ctrl+B and then unable to type.
+   */
+  function applyToolbar(t) {
+    if (!t || typeof t !== 'object') { return; }
+
+    if (familySelect && typeof t.family === 'string') {
+      var opt = familySelect.querySelector('option[value="' + t.family + '"]');
+      if (opt) { familySelect.value = t.family; }
+    }
+
+    var pairs = [
+      ['axis-bold', t.bold === true, t.boldAvailable !== false],
+      ['axis-italic', t.italic === true, t.italicAvailable !== false],
+    ];
+    for (var i = 0; i < pairs.length; i++) {
+      var btn = document.getElementById(pairs[i][0]);
+      if (!btn) { continue; }
+      btn.disabled = !pairs[i][2];
+      if (pairs[i][1]) { btn.classList.add('active'); }
+      else { btn.classList.remove('active'); }
+    }
+  }
+
   function applyRender(payload) {
     var frag = document.createDocumentFragment();
     for (var i = 0; i < payload.units.length; i++) {
@@ -718,6 +748,8 @@
       counterEl.className = 'char-counter' +
         (c.state === 'warning' ? ' counter-warning' : over ? ' counter-over' : '');
     }
+
+    applyToolbar(payload.toolbar);
 
     // replaceChildren wiped the caret along with the old spans; put it back
     // at whatever offset is armed now.

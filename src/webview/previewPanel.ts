@@ -322,13 +322,24 @@ export class PreviewPanel {
         e => e.document.uri.toString() === this._trackedUri
       );
       if (!editor) { return; }
-      vscode.window.showTextDocument(editor.document, {
+      // Undo has to run against the focused editor, so focus is taken away
+      // from the card for the duration. Give it back afterwards and put the
+      // caret where the undo left the editor, otherwise the caret simply
+      // vanishes and the user has lost their place in the card.
+      void vscode.window.showTextDocument(editor.document, {
         viewColumn: editor.viewColumn,
         preserveFocus: false,
       }).then(
         () => vscode.commands.executeCommand(command),
         (err) => console.error('[LinkedIn Preview] undo/redo failed:', err),
-      );
+      ).then(() => {
+        const after = vscode.window.visibleTextEditors.find(
+          e => e.document.uri.toString() === this._trackedUri);
+        if (after) {
+          this._cardCaret = after.document.offsetAt(after.selection.active);
+        }
+        this._panel.reveal(undefined, false);   // focus returns to the card
+      }, () => { /* focus restore is best effort */ });
       return;
     }
 
@@ -444,11 +455,15 @@ export class PreviewPanel {
       const editor = vscode.window.visibleTextEditors.find(
         e => e.document.uri.toString() === this._trackedUri
       );
-      const position = editor
-        ? editor.selection.active
-        : doc.positionAt(doc.getText().length);
+      // The card caret wins. Reading editor.selection.active inserted the
+      // emoji wherever the LEFT pane happened to be, which is not where the
+      // user just clicked in the card.
+      const emojiAt = this._cardCaret
+        ?? (editor ? doc.offsetAt(editor.selection.active) : doc.getText().length);
+      const position = doc.positionAt(Math.min(emojiAt, doc.getText().length));
       const edit = new vscode.WorkspaceEdit();
       edit.insert(doc.uri, position, message.emoji);
+      this._cardCaret = doc.offsetAt(position) + message.emoji.length;
       vscode.workspace.applyEdit(edit).then(
         undefined,
         (err) => console.error('[LinkedIn Preview] insertEmoji failed:', err),
@@ -558,9 +573,14 @@ export class PreviewPanel {
     // M4.2 fast path: nothing structural moved, so update the running page
     // instead of replacing it. Structured units, never HTML - the webview
     // builds its DOM with textContent and parses no markup (see toolbar.js).
+    // The toolbar is deliberately NOT part of this key.
+    //
+    // It used to be, so latching bold changed the key, which rebuilt the
+    // whole page, which destroyed focus and the caret - pressing Ctrl+B and
+    // then being unable to type. Toolbar state now rides along with the
+    // render message and the buttons update in place.
     const structuralKey = [
-      theme, profileName, profileHeadline, initials ?? '',
-      this._lastToolbarKey, String(showMarkers),
+      theme, profileName, profileHeadline, initials ?? '', String(showMarkers),
     ].join('|');
 
     if (this._hasRendered && structuralKey === this._lastStructuralKey) {
@@ -574,6 +594,13 @@ export class PreviewPanel {
         // Authoritative caret. The webview draws with its own optimistic
         // copy between keystrokes, then snaps to this when the render lands.
         caret: this._cardCaret,
+        toolbar: {
+          family: displayFamily,
+          bold: axisState?.bold ?? false,
+          italic: axisState?.italic ?? false,
+          boldAvailable: axisState?.boldAvailable ?? true,
+          italicAvailable: axisState?.italicAvailable ?? true,
+        },
       });
       return;
     }
