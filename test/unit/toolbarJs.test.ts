@@ -361,12 +361,17 @@ test('the keymap never acts during an IME composition', () => {
 // Selection persistence: mouseup reporting
 // ---------------------------------------------------------------------------
 
-test('toolbar.js posts selectionState on mouseup, deduped against last state', () => {
+test('toolbar.js posts selectionState on every mouseup gesture, undeduped', () => {
   assert.ok(src.includes("type: 'selectionState'"), 'selectionState message must exist');
   assert.ok(src.includes("document.body.addEventListener('mouseup'"),
     'selection reporting must hook mouseup on document.body');
-  assert.ok(src.includes('start === lastSelState.start && end === lastSelState.end'),
-    'selectionState must be deduped so re-renders cannot loop');
+  // Deliberately NOT deduped against lastSelState: the extension clears its
+  // copy on any setCaret, so an identical-looking report can still be news.
+  // Skipping it left the webview showing a selection the extension had
+  // forgotten. Loops are impossible anyway - renders never fire mouseup and
+  // the report is debounced per gesture.
+  assert.ok(!src.includes('start === lastSelState.start && end === lastSelState.end'),
+    'selectionState must not be deduped; a dropped report desyncs the two sides');
 });
 
 test('toolbar.js primes lastSelState from a restored selection', () => {

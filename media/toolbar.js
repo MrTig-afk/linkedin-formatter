@@ -410,7 +410,10 @@
     var offsets = resolveSelectionOffsets();
     var start = offsets ? offsets.start : 0;
     var end = offsets ? offsets.end : 0;
-    if (start === lastSelState.start && end === lastSelState.end) { return; }
+    // No dedupe against the last report: the extension may have dropped its
+    // copy in the meantime (any setCaret clears it), so an identical-looking
+    // state can still be news. This is debounced to one post per gesture,
+    // so repeating is cheap; silently skipping desynced the two sides.
     lastSelState = { start: start, end: end };
     vscode.postMessage({ type: 'selectionState', start: start, end: end });
   }

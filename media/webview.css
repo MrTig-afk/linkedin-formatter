@@ -654,6 +654,12 @@ body {
   background: var(--ink);
   vertical-align: text-bottom;
   user-select: none;
+  /* The caret sits EXACTLY where the user just clicked - and where they
+     double-click next. If it takes the mousedown, Chromium anchors the
+     word-selection in a non-selectable element and no selection forms:
+     "double click does not select at all". Let clicks pass through to
+     the text underneath. */
+  pointer-events: none;
   animation: card-caret-blink 1.06s steps(1, end) infinite;
 }
 
