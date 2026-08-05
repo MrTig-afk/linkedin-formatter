@@ -453,20 +453,6 @@
     body.appendChild(marker);
   })();
 
-  // ---------------------------------------------------------------
-  // Undo/redo from the preview: forward to the real editor's undo stack.
-  // ---------------------------------------------------------------
-  document.body.addEventListener('keydown', function (e) {
-    if (!(e.ctrlKey || e.metaKey)) { return; }
-    var key = e.key.toLowerCase();
-    if (key === 'z' && !e.shiftKey) {
-      e.preventDefault();
-      vscode.postMessage({ type: 'undo' });
-    } else if (key === 'y' || (key === 'z' && e.shiftKey)) {
-      e.preventDefault();
-      vscode.postMessage({ type: 'redo' });
-    }
-  });
 
   // Insert via event delegation on the groups container.
   var emojiGroupsEl = document.getElementById('emoji-groups');
@@ -816,47 +802,52 @@
     return { start: offset, end: offset + l };
   }
 
-  document.addEventListener('keydown', function (e) {
-    if (e.key !== 'Backspace' && e.key !== 'Delete') { return; }
-
-    // A selection in the card wins over the caret: the user is deleting what
-    // they highlighted, whichever key they pressed.
+  /** Delete whatever is selected in the card. Shared by both delete keys. */
+  function deleteSelection() {
     var sel = resolveSelectionOffsets();
-    if (sel && sel.start !== sel.end) {
-      e.preventDefault();
-      vscode.postMessage({ type: 'replaceText', start: sel.start, end: sel.end, text: '' });
-      caretOffset = sel.start;
-      return;
-    }
+    if (!sel || sel.start === sel.end) { return false; }
+    vscode.postMessage({ type: 'replaceText', start: sel.start, end: sel.end, text: '' });
+    caretOffset = sel.start;
+    return true;
+  }
 
-    if (caretOffset === null) { return; }
+  function deleteCharBackward() {
+    if (deleteSelection()) { return true; }
+    if (caretOffset === null) { return false; }
+    var r = spanEndingAt(caretOffset);
+    if (!r) { return false; }
+    vscode.postMessage({ type: 'replaceText', start: r.start, end: r.end, text: '' });
+    caretOffset = r.start;
+    return true;
+  }
 
-    // Ctrl (or Cmd) widens the deletion to a whole word.
-    if (e.ctrlKey || e.metaKey) {
-      var wordFrom = e.key === 'Backspace'
-        ? wordStartBefore(caretOffset)
-        : caretOffset;
-      var wordTo = e.key === 'Backspace'
-        ? caretOffset
-        : wordEndAfter(caretOffset);
-      if (wordFrom === null || wordTo === null || wordFrom >= wordTo) { return; }
-      e.preventDefault();
-      vscode.postMessage({
-        type: 'replaceText', start: wordFrom, end: wordTo, text: ''
-      });
-      if (e.key === 'Backspace') { caretOffset = wordFrom; }
-      return;
-    }
+  function deleteCharForward() {
+    if (deleteSelection()) { return true; }
+    if (caretOffset === null) { return false; }
+    var r = spanStartingAt(caretOffset);
+    if (!r) { return false; }
+    vscode.postMessage({ type: 'replaceText', start: r.start, end: r.end, text: '' });
+    return true;
+  }
 
-    var range = e.key === 'Backspace'
-      ? spanEndingAt(caretOffset)
-      : spanStartingAt(caretOffset);
-    if (!range) { return; }        // start of document, or end of it
+  function deleteWordBackward() {
+    if (deleteSelection()) { return true; }
+    if (caretOffset === null) { return false; }
+    var from = wordStartBefore(caretOffset);
+    if (from === null || from >= caretOffset) { return false; }
+    vscode.postMessage({ type: 'replaceText', start: from, end: caretOffset, text: '' });
+    caretOffset = from;
+    return true;
+  }
 
-    e.preventDefault();
-    vscode.postMessage({ type: 'replaceText', start: range.start, end: range.end, text: '' });
-    if (e.key === 'Backspace') { caretOffset = range.start; }
-  });
+  function deleteWordForward() {
+    if (deleteSelection()) { return true; }
+    if (caretOffset === null) { return false; }
+    var to = wordEndAfter(caretOffset);
+    if (to === null || to <= caretOffset) { return false; }
+    vscode.postMessage({ type: 'replaceText', start: caretOffset, end: to, text: '' });
+    return true;
+  }
 
   // -------------------------------------------------------------
   // Arrow-key navigation.
@@ -967,26 +958,22 @@
     return next;
   }
 
-  document.addEventListener('keydown', function (e) {
-    if (caretOffset === null) { return; }
-    if (e.ctrlKey || e.metaKey || e.altKey) { return; }
-
-    var next = null;
-    if (e.key === 'ArrowLeft')  { next = caretLeftOf(caretOffset); desiredX = null; }
-    else if (e.key === 'ArrowRight') { next = caretRightOf(caretOffset); desiredX = null; }
-    else if (e.key === 'Home')  { next = 0; desiredX = null; }
-    else if (e.key === 'End')   { next = documentEnd(); desiredX = null; }
-    else if (e.key === 'ArrowUp')   { next = moveVertical('up'); }
-    else if (e.key === 'ArrowDown') { next = moveVertical('down'); }
-    else { return; }
-
-    e.preventDefault();
-    // null means there is nowhere to go - already at an edge. Stay put
-    // rather than disarming, so typing still works.
-    if (next === null) { return; }
+  /** Apply a computed caret position. null means 'nowhere to go'; stay put. */
+  function moveTo(next, keepColumn) {
+    if (caretOffset === null) { return false; }
+    if (!keepColumn) { desiredX = null; }
+    if (next === null) { return true; }   // handled: at an edge, do not fall through
     caretOffset = next;
     drawCardCaret();
-  });
+    return true;
+  }
+
+  function moveCharLeft()  { return moveTo(caretLeftOf(caretOffset), false); }
+  function moveCharRight() { return moveTo(caretRightOf(caretOffset), false); }
+  function moveLineUp()    { return moveTo(moveVertical('up'), true); }
+  function moveLineDown()  { return moveTo(moveVertical('down'), true); }
+  function moveDocStart()  { return moveTo(0, false); }
+  function moveDocEnd()    { return moveTo(documentEnd(), false); }
 
   // -------------------------------------------------------------
   // Enter: insert a newline.
@@ -994,14 +981,189 @@
   // The catcher is an <input>, which silently swallows Enter - no input
   // event, no newline. It has to be handled as a key and posted directly.
   // -------------------------------------------------------------
-  document.addEventListener('keydown', function (e) {
-    if (e.key !== 'Enter') { return; }
-    if (e.ctrlKey || e.metaKey || e.altKey) { return; }
-    if (caretOffset === null) { return; }
-    e.preventDefault();
-    vscode.postMessage({
-      type: 'insertText', text: '\n', offset: caretOffset
-    });
+  function insertNewline() {
+    if (caretOffset === null) { return false; }
+    vscode.postMessage({ type: 'insertText', text: '\n', offset: caretOffset });
     caretOffset += 1;
+    desiredX = null;
+    return true;
+  }
+
+  function sendUndo() { vscode.postMessage({ type: 'undo' }); return true; }
+  function sendRedo() { vscode.postMessage({ type: 'redo' }); return true; }
+
+  /**
+   * Offset at the start or end of the caret's VISUAL line.
+   *
+   * Geometry again, for the same reason as up/down: the card wraps, so a
+   * visual line has no fixed character count and Home must go to the wrap
+   * point rather than to the paragraph start.
+   */
+  function lineBoundary(which) {
+    var rect = caretRect();
+    if (!rect) { return null; }
+    var midY = rect.top + rect.height / 2;
+    var spans = offsetSpans();
+    var best = null;
+    var bestRect = null;
+    for (var i = 0; i < spans.length; i++) {
+      var r = spans[i].getBoundingClientRect();
+      if (!r.height) { continue; }
+      // Same visual line: vertical centres within half a line of each other.
+      if (Math.abs((r.top + r.height / 2) - midY) > r.height / 2) { continue; }
+      if (best === null
+          || (which === 'start' ? r.left < bestRect.left : r.left > bestRect.left)) {
+        best = spans[i];
+        bestRect = r;
+      }
+    }
+    if (best === null) { return null; }
+    var o = parseInt(best.dataset.offset, 10);
+    if (which === 'start') { return o; }
+    return o + parseInt(best.dataset.len, 10);
+  }
+
+  function moveLineStart() { return moveTo(lineBoundary('start'), false); }
+  function moveLineEnd()   { return moveTo(lineBoundary('end'), false); }
+
+  /**
+   * Forward word motion differs by platform, and it is not a detail:
+   * Windows stops at the START of the next word, macOS at the END of it.
+   * Backward motion is identical on both.
+   */
+  function wordStartAfter(offset) {
+    var spans = offsetSpans();
+    var i = 0;
+    while (i < spans.length && parseInt(spans[i].dataset.offset, 10) < offset) { i++; }
+    while (i < spans.length && !isSpaceSpan(spans[i])) { i++; }   // out of this word
+    while (i < spans.length && isSpaceSpan(spans[i])) { i++; }    // over the gap
+    if (i >= spans.length) { return documentEnd(); }
+    return parseInt(spans[i].dataset.offset, 10);
+  }
+
+  function moveWordLeft() {
+    if (caretOffset === null) { return false; }
+    return moveTo(wordStartBefore(caretOffset), false);
+  }
+
+  function moveWordRight() {
+    if (caretOffset === null) { return false; }
+    return moveTo(IS_MAC ? wordEndAfter(caretOffset) : wordStartAfter(caretOffset), false);
+  }
+
+  /**
+   * Bold/italic from the keyboard.
+   *
+   * The toolbar tooltips have always advertised 'Bold (Ctrl+B)', but the
+   * package.json keybinding is gated on editorTextFocus, which is false
+   * whenever focus is in this panel - so the shortcut the UI promised did
+   * nothing here. A collapsed range latches the axis for typing; a real
+   * selection restyles it, matching the buttons exactly.
+   */
+  function toggleAxisKey(axis) {
+    var btn = document.getElementById(axis === 'bold' ? 'axis-bold' : 'axis-italic');
+    if (btn && btn.disabled) { return true; }   // family has no such axis
+    var offsets = resolveSelectionOffsets();
+    vscode.postMessage({
+      type: 'toggleAxis',
+      axis: axis,
+      start: offsets ? offsets.start : 0,
+      end: offsets ? offsets.end : 0
+    });
+    return true;
+  }
+
+  function toggleBoldKey()   { return toggleAxisKey('bold'); }
+  function toggleItalicKey() { return toggleAxisKey('italic'); }
+  // ---------------------------------------------------------------
+  // The keymap.
+  //
+  // One listener, one table. This replaced four independent keydown
+  // handlers that each did their own modifier checks; adding Shift variants
+  // and a platform split across four of them would not have stayed coherent.
+  //
+  // Chords are normalised strings, as CodeMirror and ProseMirror both do.
+  // 'Mod' resolves to Ctrl on Windows/Linux and Cmd on macOS. A 'mac' entry
+  // overrides the default binding on macOS only.
+  //
+  // Platform matters for more than taste: on macOS, Cmd+Backspace means
+  // 'delete to line start', so treating Ctrl and Cmd as interchangeable would
+  // delete a word when the user asked for a line. That is a wrong deletion,
+  // not a missing feature.
+  // ---------------------------------------------------------------
+  var IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+
+  // Note: on macOS the system binds Home/End to SCROLLING rather than caret
+  // motion. They stay bound to line start/end here on both platforms, because
+  // that is what Mac users overwhelmingly remap them to anyway, and Cmd+Left
+  // and Cmd+Right are bound alongside for anyone using the native chords.
+
+  function chordOf(e) {
+    var parts = [];
+    if (e.ctrlKey)  { parts.push('Ctrl'); }
+    if (e.altKey)   { parts.push('Alt'); }
+    if (e.metaKey)  { parts.push('Meta'); }
+    if (e.shiftKey) { parts.push('Shift'); }
+    var k = e.key;
+    parts.push(k.length === 1 ? k.toLowerCase() : k);
+    return parts.join('-');
+  }
+
+  /** Resolve 'Mod' for this platform so the table can stay declarative. */
+  function resolveChord(chord) {
+    return chord.replace(/\bMod\b/, IS_MAC ? 'Meta' : 'Ctrl');
+  }
+
+  var BINDINGS = [
+    // Editing
+    { key: 'Enter',            run: insertNewline },
+    { key: 'Backspace',        run: deleteCharBackward },
+    { key: 'Delete',           run: deleteCharForward },
+    { key: 'Mod-Backspace',    mac: 'Alt-Backspace', run: deleteWordBackward },
+    { key: 'Mod-Delete',       mac: 'Alt-Delete',    run: deleteWordForward },
+
+    // History
+    { key: 'Mod-z',            run: sendUndo },
+    { key: 'Mod-y',            run: sendRedo },
+    { key: 'Mod-Shift-z',      run: sendRedo },
+
+    // Caret motion
+    { key: 'ArrowLeft',        run: moveCharLeft },
+    { key: 'ArrowRight',       run: moveCharRight },
+    { key: 'ArrowUp',          run: moveLineUp },
+    { key: 'ArrowDown',        run: moveLineDown },
+    // Home/End go to the VISUAL line, which is what every editor does and
+    // what wrapping requires. Mod promotes them to the whole document.
+    { key: 'Home',             mac: 'Meta-ArrowLeft',  run: moveLineStart },
+    { key: 'End',              mac: 'Meta-ArrowRight', run: moveLineEnd },
+    { key: 'Mod-Home',         mac: 'Meta-ArrowUp',    run: moveDocStart },
+    { key: 'Mod-End',          mac: 'Meta-ArrowDown',  run: moveDocEnd },
+
+    // Word motion. The logic already existed for deletion; it was never bound
+    // to the arrows because the handler bailed out on any modifier.
+    { key: 'Mod-ArrowLeft',    mac: 'Alt-ArrowLeft',   run: moveWordLeft },
+    { key: 'Mod-ArrowRight',   mac: 'Alt-ArrowRight',  run: moveWordRight },
+
+    // Formatting, finally honouring what the toolbar tooltips promise.
+    { key: 'Mod-b',            run: toggleBoldKey },
+    { key: 'Mod-i',            run: toggleItalicKey },
+  ];
+
+  var KEYMAP = (function () {
+    var map = {};
+    for (var i = 0; i < BINDINGS.length; i++) {
+      var b = BINDINGS[i];
+      var chord = resolveChord(IS_MAC && b.mac ? b.mac : b.key);
+      map[chord] = b.run;
+    }
+    return map;
+  })();
+
+  document.addEventListener('keydown', function (e) {
+    // Never fight an active IME: mutating the DOM mid-composition aborts it.
+    if (e.isComposing || e.keyCode === 229) { return; }
+    var run = KEYMAP[chordOf(e)];
+    if (!run) { return; }
+    if (run() !== false) { e.preventDefault(); }
   });
 })();

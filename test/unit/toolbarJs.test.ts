@@ -321,7 +321,40 @@ test('toolbar.js inserts a caret marker from data-caret-offset', () => {
 test('toolbar.js posts undo/redo on ctrl-z / ctrl-y without payload', () => {
   assert.ok(src.includes("vscode.postMessage({ type: 'undo' })"), 'undo message must be bare');
   assert.ok(src.includes("vscode.postMessage({ type: 'redo' })"), 'redo message must be bare');
-  assert.ok(src.includes("key === 'z'") && src.includes("key === 'y'"), 'keydown handler must check z and y');
+  // The chords now live in the keymap table rather than in inline key checks.
+  // Mod resolves to Ctrl on Windows/Linux and Cmd on macOS.
+  assert.ok(src.includes("{ key: 'Mod-z',"), 'undo must be bound to Mod-z');
+  assert.ok(src.includes("{ key: 'Mod-y',"), 'redo must be bound to Mod-y');
+  assert.ok(src.includes("{ key: 'Mod-Shift-z',"), 'redo must also be bound to Mod-Shift-z');
+});
+
+// ---------------------------------------------------------------------------
+// The keymap: one table, one listener
+// ---------------------------------------------------------------------------
+
+test('toolbar.js has exactly ONE keydown listener', () => {
+  // Four independent handlers each doing their own modifier checks could not
+  // stay coherent once Shift variants and a platform split were added.
+  const listeners = src.match(/addEventListener\('keydown'/g) ?? [];
+  assert.equal(listeners.length, 1,
+    `expected a single keydown listener, found ${listeners.length}`);
+});
+
+test('the keymap splits Windows and macOS where the platforms genuinely differ', () => {
+  // On macOS Cmd+Backspace means "delete to line start", so treating Ctrl and
+  // Cmd as interchangeable would delete a word when the user asked for a line.
+  // That is a wrong deletion, not a missing feature.
+  assert.ok(src.includes("mac: 'Alt-Backspace'"),
+    'word-delete-backward must be Option+Backspace on macOS');
+  assert.ok(src.includes("mac: 'Alt-Delete'"),
+    'word-delete-forward must be Option+Delete on macOS');
+  assert.ok(/IS_MAC\s*=/.test(src), 'the keymap must detect the platform');
+});
+
+test('the keymap never acts during an IME composition', () => {
+  // Mutating the DOM mid-composition aborts it, which would break CJK input.
+  assert.ok(src.includes('e.isComposing'), 'must check isComposing');
+  assert.ok(src.includes('229'), 'must also guard the legacy keyCode 229 signal');
 });
 
 // ---------------------------------------------------------------------------
