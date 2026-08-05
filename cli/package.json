@@ -28,5 +28,8 @@
   "engines": {
     "node": ">=18"
   },
-  "private": true
+  "private": true,
+  "scripts": {
+    "prepublishOnly": "node ../cli-build.js"
+  }
 }
