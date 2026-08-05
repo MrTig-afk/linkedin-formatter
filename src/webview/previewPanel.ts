@@ -120,6 +120,16 @@ export class PreviewPanel {
    */
   private _editChain: Promise<void> = Promise.resolve();
   /**
+   * Undo coalescing for typing. Each keystroke used to be its own
+   * WorkspaceEdit and therefore its own undo stop, so Ctrl+Z peeled one
+   * character at a time. Real editors swallow a typed run back to the
+   * word boundary. We get that by inserting through TextEditor.edit with
+   * undo stops only at boundaries: after whitespace, after a pause, or
+   * after the caret moved.
+   */
+  private _lastTypedAt = 0;
+  private _lastTypedBoundary = true;
+  /**
    * Diagnostics for the caret investigation (branch-only, not shipped).
    * Every caret-relevant event lands here with a timestamp, so a repro of
    * "typing jumped lines" turns into a readable trace instead of a guess.
@@ -278,6 +288,25 @@ export class PreviewPanel {
         this._selfEditsInFlight--;
       } else if (this._historyInFlight) {
         this.log('docChange classified HISTORY');
+        this._lastTypedBoundary = true;
+        // Rebase the card caret across the undone/redone change. The
+        // previous approach read the EDITOR's cursor afterwards, but that
+        // cursor does not track the card - the trace showed a caret at 760
+        // teleporting to 1162 because that is where the editor happened to
+        // be. The change event tells us exactly what moved and by how much.
+        if (this._cardCaret !== null) {
+          for (const ch of event.contentChanges) {
+            const start = ch.rangeOffset;
+            const oldEnd = ch.rangeOffset + ch.rangeLength;
+            const delta = ch.text.length - ch.rangeLength;
+            if (this._cardCaret >= oldEnd) {
+              this._cardCaret += delta;
+            } else if (this._cardCaret > start) {
+              this._cardCaret = start + ch.text.length;
+            }
+          }
+          this._cardCaretAssoc = 'before';
+        }
         // Our own undo/redo. Not external: the user asked for it from the
         // card, so the card must stay armed. The caret is recomputed from
         // the editor once the command resolves.
@@ -390,12 +419,9 @@ export class PreviewPanel {
         this._historyInFlight = false;
         const after = vscode.window.visibleTextEditors.find(
           e => e.document.uri.toString() === this._trackedUri);
-        if (after) {
-          // Land the card caret where the undo left the editor, leaning on
-          // the character behind it, the way undo leaves you in Word.
-          this._cardCaret = after.document.offsetAt(after.selection.active);
-          this._cardCaretAssoc = 'before';
-        }
+        // The card caret was already rebased from the change event itself;
+        // the editor's cursor is NOT consulted - it does not track the
+        // card and pointed somewhere unrelated in practice.
         this._panel.reveal(undefined, false);   // focus returns to the card
         // Push a fresh render so the webview re-arms from the echoed caret.
         if (after) { this.update(after.document); }
@@ -425,6 +451,7 @@ export class PreviewPanel {
       // the caret is so the next insert lands in the right place.
       this._cardCaret = message.offset;
       this._cardCaretAssoc = message.assoc ?? 'after';
+      this._lastTypedBoundary = true;   // caret moved: next insert starts a new undo unit
       // Moving the caret drops any pending Ctrl+B/I, as a word processor
       // does. (The render echo does not pass through here, so a pending
       // format survives an actual typing run.)
@@ -485,14 +512,34 @@ export class PreviewPanel {
           ? msg.text                         // 'plain': serif regular IS ASCII
           : applyStyle(msg.text, style);
 
-        const edit = new vscode.WorkspaceEdit();
-        edit.insert(doc.uri, doc.positionAt(insertAt), styled);
         this._selfEditsInFlight += 1;
         // Advance by what was ACTUALLY inserted, leaning on the character
         // just typed so the caret renders at the end of a wrapped line.
         this._cardCaret = insertAt + styled.length;
         this._cardCaretAssoc = 'before';
-        const applied = await vscode.workspace.applyEdit(edit);
+
+        // Undo stop only at a word boundary: after whitespace, after a
+        // pause, or after the caret moved. Everything between boundaries
+        // undoes as ONE unit - Ctrl+Z takes back the word, not a letter.
+        const now = Date.now();
+        const boundary = this._lastTypedBoundary || (now - this._lastTypedAt) > 700;
+        this._lastTypedAt = now;
+        this._lastTypedBoundary = /\s/.test(msg.text);
+
+        const activeEditor = vscode.window.visibleTextEditors.find(
+          e => e.document.uri.toString() === this._trackedUri);
+        let applied: boolean;
+        if (activeEditor) {
+          applied = await activeEditor.edit(
+            (eb) => eb.insert(doc.positionAt(insertAt), styled),
+            { undoStopBefore: boundary, undoStopAfter: false });
+        } else {
+          // No visible editor: WorkspaceEdit still works, just without
+          // coalescing (it cannot suppress undo stops).
+          const edit = new vscode.WorkspaceEdit();
+          edit.insert(doc.uri, doc.positionAt(insertAt), styled);
+          applied = await vscode.workspace.applyEdit(edit);
+        }
         if (!applied) {
           this._selfEditsInFlight = Math.max(0, this._selfEditsInFlight - 1);
           this._cardCaret = insertAt;
@@ -528,6 +575,7 @@ export class PreviewPanel {
         this._selfEditsInFlight += 1;
         this._cardCaret = start + replacement.length;
         this._cardCaretAssoc = replacement.length === 0 ? 'after' : 'before';
+        this._lastTypedBoundary = true;
         const applied = await vscode.workspace.applyEdit(edit);
         if (!applied) {
           this._selfEditsInFlight = Math.max(0, this._selfEditsInFlight - 1);
