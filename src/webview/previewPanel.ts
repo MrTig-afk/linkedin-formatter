@@ -487,6 +487,9 @@ export class PreviewPanel {
       this._cardCaret = message.offset;
       this._cardCaretAssoc = message.assoc ?? 'after';
       this._lastTypedBoundary = true;   // caret moved: next insert starts a new undo unit
+      // A collapsed caret ends any selection; without this the next render
+      // would repaint a selection the user has already clicked away.
+      this._restoreSelection = null;
       // Moving the caret drops any pending Ctrl+B/I, as a word processor
       // does. (The render echo does not pass through here, so a pending
       // format survives an actual typing run.)
@@ -532,6 +535,7 @@ export class PreviewPanel {
       this._editChain = this._editChain.then(async () => {
         // The document is CURRENT here: the previous edit has landed.
         const full = doc.getText();
+        this._restoreSelection = null;   // typing collapses any selection
         const insertAt = this._cardCaret !== null
           // Our own caret is a boundary by construction; clamp only.
           ? Math.min(this._cardCaret, full.length)
@@ -590,6 +594,9 @@ export class PreviewPanel {
       const msg = message;
       this._editChain = this._editChain.then(async () => {
         const full = doc.getText();
+        // The replacement consumed whatever was selected (type-over or
+        // deletion); the highlight must not survive it.
+        this._restoreSelection = null;
         const start = Math.min(msg.start, full.length);
         const end = Math.min(msg.end, full.length);
         const range = new vscode.Range(
@@ -626,6 +633,7 @@ export class PreviewPanel {
       const msg = message;
       this._editChain = this._editChain.then(async () => {
         const full = doc.getText();
+        this._restoreSelection = null;   // emoji insert collapses a selection
         const editor = vscode.window.visibleTextEditors.find(
           e => e.document.uri.toString() === this._trackedUri
         );
@@ -774,6 +782,10 @@ export class PreviewPanel {
         // copy between keystrokes, then snaps to this when the render lands.
         caret: this._cardCaret,
         caretAssoc: this._cardCaretAssoc,
+        // The card's visible selection. The native mouse selection cannot
+        // survive the span rebuild, so the webview repaints this range
+        // (via its keyboard-selection model) after every render.
+        selection: this._restoreSelection,
         toolbar: {
           family: displayFamily,
           bold: axisState?.bold ?? false,

@@ -909,9 +909,25 @@
 
     applyToolbar(payload.toolbar);
 
-    // New spans: the painted selection is on dead nodes, and after any
-    // edit the old offsets are stale anyway. Consume it.
-    selAnchor = null;
+    // New spans: the painted selection is on dead nodes. Repaint it from
+    // the extension's stored range - the native mouse selection cannot
+    // survive replaceChildren, which is why a double-click "suddenly
+    // unselected" the moment the toolbar re-rendered. Adopting the range
+    // into the keyboard-selection model keeps type-over, delete, Escape
+    // and every toolbar button working on it.
+    var rs = payload.selection;
+    if (payload.external !== true && rs && typeof rs.start === 'number'
+        && typeof rs.end === 'number' && rs.start < rs.end) {
+      selAnchor = rs.start;
+      // Assign directly, never through setCaret: this value CAME from the
+      // extension, and posting it back would clear the very selection it
+      // carries.
+      caretOffset = rs.end;
+      caretAssoc = 'before';
+    } else {
+      selAnchor = null;
+    }
+    paintKbdSelection();
 
     // replaceChildren wiped the caret along with the old spans; put it back
     // at whatever offset is armed now.
@@ -1334,6 +1350,10 @@
   function collapseSelectionKey() {
     if (kbdSelection() === null) { return false; }   // nothing to do; let Escape bubble
     collapseKbdSelection();
+    // Tell the extension too, or the next render repaints the selection
+    // it still remembers.
+    lastSelState = { start: 0, end: 0 };
+    vscode.postMessage({ type: 'selectionState', start: 0, end: 0 });
     return true;
   }
 
