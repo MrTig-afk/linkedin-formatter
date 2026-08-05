@@ -86,10 +86,15 @@ body.theme-editor {
 }
 
 body {
-  /* The symbol/emoji tail gives glyphs to enclosed alphanumerics
+  /* The symbol and emoji faces come BEFORE the generic family. A generic
+     like sans-serif always resolves to a concrete font, and if that font
+     carries a monochrome glyph for an emoji it wins - the colour face
+     further down the list is never consulted, so emoji render as flat
+     outlines. The symbol faces also supply the enclosed alphanumerics
      (circled, squared, parenthesized) that text faces lack. */
-  font-family: -apple-system, "Segoe UI", Roboto, sans-serif,
-    "Segoe UI Symbol", "Segoe UI Emoji", "Noto Sans Symbols 2", "Noto Color Emoji";
+  font-family: -apple-system, "Segoe UI", Roboto,
+    "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji",
+    "Segoe UI Symbol", "Noto Sans Symbols 2", sans-serif;
   background: var(--canvas);
   /* Column stack: toolbar on top, card filling the pane below, counter
      last. A row here lays the toolbar out BESIDE the card. */

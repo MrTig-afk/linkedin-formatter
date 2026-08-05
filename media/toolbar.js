@@ -607,13 +607,19 @@
         text: text,
         offset: caretOffset
       });
-      // Optimistic, and deliberately approximate: styling can change the
-      // length and only the extension knows by how much. This just keeps the
-      // caret roughly right for the few milliseconds until the render lands
-      // and replaces it with the authoritative value.
-      caretOffset += text.length;
+      // Deliberately NOT advanced here.
+      //
+      // Guessing was worse than waiting. Styling changes the length - "a"
+      // becomes a two-unit astral character - and only the extension knows
+      // by how much, so any local guess is wrong by one unit per styled
+      // character. Drawing at that guess made the caret visibly jump back
+      // into the middle of the word being typed.
+      //
+      // The extension ignores this offset anyway (it owns the caret) and
+      // sends the true position back with the render a few milliseconds
+      // later. Holding the caret still until then is invisible; moving it
+      // to the wrong place is not.
       desiredX = null;   // typing sets a new column
-      drawCardCaret();   // keep the visible caret with the text, not behind it
     });
 
     // No invalidation listener is needed. Re-render assigns webview.html
@@ -700,6 +706,7 @@
       // arrives. Without this the two drift by one unit per styled character
       // and inserts start landing inside the previous one.
       caretOffset = payload.caret;
+      drawCardCaret();
     }
 
     var c = payload.counter;

@@ -99,19 +99,40 @@ test('contributes.commands registers linkedinFormatter.toggleStrikethrough', () 
   assert.strictEqual(cmd.title, 'LinkedIn: Toggle Strikethrough');
 });
 
-test('contributes.keybindings has exactly 4 entries', () => {
+test('contributes.keybindings has exactly 6 entries', () => {
+  // 4 editor bindings, plus ctrl+b / ctrl+i re-declared for the preview panel.
   assert.ok(Array.isArray(pkg.contributes.keybindings));
-  assert.strictEqual(pkg.contributes.keybindings.length, 4);
+  assert.strictEqual(pkg.contributes.keybindings.length, 6);
 });
 
-test('every keybinding is scoped to editorTextFocus && editorLangId == linkedin', () => {
+test('NO keybinding is global - every one is scoped to a context', () => {
+  // The invariant that matters: an unscoped ctrl+b would hijack Toggle Primary
+  // Side Bar for every VS Code user who installs this, everywhere. Two scopes
+  // are legitimate here and nothing else is.
+  const ALLOWED = new Set([
+    "editorTextFocus && editorLangId == 'linkedin'",
+    "activeWebviewPanelId == 'linkedinFormatter.preview'",
+  ]);
   for (const kb of pkg.contributes.keybindings) {
-    assert.strictEqual(
-      kb.when,
-      "editorTextFocus && editorLangId == 'linkedin'",
-      `keybinding for ${kb.command} has wrong when clause: ${kb.when}`
+    assert.ok(kb.when, `keybinding for ${kb.command} has NO when clause - it would be global`);
+    assert.ok(
+      ALLOWED.has(kb.when),
+      `keybinding for ${kb.command} has an unrecognised when clause: ${kb.when}`
     );
   }
+});
+
+test('the preview-scoped bindings exist so VS Code stops stealing ctrl+b', () => {
+  // Without these, ctrl+b in the preview falls through to the workbench and
+  // toggles the side bar while the panel also handles it. The bound command
+  // no-ops when there is no active editor; its job here is to consume the key.
+  const preview = pkg.contributes.keybindings.filter(
+    (kb: { when: string }) => kb.when === "activeWebviewPanelId == 'linkedinFormatter.preview'");
+  assert.strictEqual(preview.length, 2, 'expected ctrl+b and ctrl+i for the preview');
+  assert.deepEqual(
+    preview.map((kb: { key: string }) => kb.key).sort(),
+    ['ctrl+b', 'ctrl+i'],
+  );
 });
 
 test('keybinding key assignments are correct', () => {
