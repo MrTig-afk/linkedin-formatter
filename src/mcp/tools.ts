@@ -59,7 +59,10 @@ export const SERVER_INSTRUCTIONS =
   + 'Code (for example: code draft.linkedin). The LinkedIn Formatter '
   + 'extension renders it as a live LinkedIn card beside the editor, where '
   + 'the user reviews and adjusts by hand before posting. Give the user the '
-  + 'preview, not just the raw styled text.';
+  + 'preview, not just the raw styled text. If the preview does not appear, '
+  + 'the extension is not installed; OFFER the user the command '
+  + 'code --install-extension kaushiknaru.linkedin-formatter and let them '
+  + 'decide - never install anything without asking.';
 
 const CONVENTION =
   'LinkedIn posts belong in a file ending .linkedin, written as plain text '
