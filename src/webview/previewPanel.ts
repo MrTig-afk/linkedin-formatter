@@ -289,22 +289,18 @@ export class PreviewPanel {
       } else if (this._historyInFlight) {
         this.log('docChange classified HISTORY');
         this._lastTypedBoundary = true;
-        // Rebase the card caret across the undone/redone change. The
-        // previous approach read the EDITOR's cursor afterwards, but that
-        // cursor does not track the card - the trace showed a caret at 760
-        // teleporting to 1162 because that is where the editor happened to
-        // be. The change event tells us exactly what moved and by how much.
+        // Jump the card caret TO the undone/redone edit, the way Word and
+        // VS Code do. Merely rebasing kept the caret frozen in place while
+        // undo visibly removed text elsewhere in the document. The change
+        // event says exactly where the edit landed: the caret goes to the
+        // end of the reinstated text (start of the removal when undoing an
+        // insert, end of the restored run when undoing a delete).
         if (this._cardCaret !== null) {
+          let site = event.contentChanges[0];
           for (const ch of event.contentChanges) {
-            const start = ch.rangeOffset;
-            const oldEnd = ch.rangeOffset + ch.rangeLength;
-            const delta = ch.text.length - ch.rangeLength;
-            if (this._cardCaret >= oldEnd) {
-              this._cardCaret += delta;
-            } else if (this._cardCaret > start) {
-              this._cardCaret = start + ch.text.length;
-            }
+            if (ch.rangeOffset < site.rangeOffset) { site = ch; }
           }
+          this._cardCaret = site.rangeOffset + site.text.length;
           this._cardCaretAssoc = 'before';
         }
         // Our own undo/redo. Not external: the user asked for it from the
