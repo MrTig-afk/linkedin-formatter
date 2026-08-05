@@ -190,3 +190,45 @@ export function detectFormatting(text: string): DetectedFormat[] {
   }
   return result;
 }
+
+/**
+ * Style a typed character to match the text it is being typed into.
+ *
+ * M4.4 (PRD S7.4). Looks at the visual character immediately BEFORE the
+ * insertion point and applies its letterform style to the new text, so
+ * typing at the end of a bold run continues bold.
+ *
+ * Context is used rather than a sticky toolbar mode because it needs no new
+ * state and matches what every other editor does: formatting follows the text
+ * you are typing into, not a mode you set earlier and forgot about.
+ *
+ * Falls back to the text unchanged when there is nothing before the caret, or
+ * when the preceding character is unstyled ASCII. Fail-closed: a character
+ * with no equivalent in the detected style is left alone by applyStyle.
+ *
+ * @param fullText - the whole document
+ * @param offset   - UTF-16 offset the text is being inserted at
+ * @param typed    - the raw characters typed
+ */
+export function styleTypedText(
+  fullText: string,
+  offset: number,
+  typed: string,
+): string {
+  if (offset <= 0 || typed.length === 0) { return typed; }
+
+  // Take a few code units back and pick the last WHOLE code point, so a
+  // surrogate pair is read as one character rather than half of one.
+  const window = fullText.slice(Math.max(0, offset - 4), offset);
+  const chars = [...window];
+  const prev = chars[chars.length - 1];
+  if (prev === undefined) { return typed; }
+
+  const codePoint = prev.codePointAt(0);
+  if (codePoint === undefined) { return typed; }
+
+  const detected = detectStyle(codePoint);
+  if (detected === null) { return typed; }   // preceding char is plain
+
+  return applyStyle(typed, detected.style);
+}

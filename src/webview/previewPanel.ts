@@ -5,6 +5,7 @@ import { buildPreviewHtml, getNonce, buildCounterHtml, type AxisState } from './
 import { validateMessage } from '../lib/validateMessage';
 import type { WebviewMessage } from '../lib/messageContract';
 import { toggleStyle, clearAllFormatting, snapToCodePointBoundary } from '../lib/toggleStyle';
+import { styleTypedText } from '../lib/convert';
 import { convertFamily, toggleAxis, summarizeSelection, effectiveFamily, FAMILY_IDS, FAMILY_MATRIX, type FamilyId } from '../lib/family';
 import { countCharacters, getCounterState, LINKEDIN_POST_LIMIT, type CountingUnit } from '../lib/charCount';
 import { parseGitConfig, initialsOf, type GitIdentity } from '../lib/identity';
@@ -317,8 +318,11 @@ export class PreviewPanel {
       // M4.1: typing in the card. The offset is already validated and clamped
       // to the document by validateMessage, so positionAt cannot throw here.
       const position = doc.positionAt(message.offset);
+      // M4.4: continue the formatting of the text being typed into, so a
+      // character typed at the end of a bold run arrives bold.
+      const styled = styleTypedText(doc.getText(), message.offset, message.text);
       const edit = new vscode.WorkspaceEdit();
-      edit.insert(doc.uri, position, message.text);
+      edit.insert(doc.uri, position, styled);
       // Mark as ours so the resulting change is not mistaken for an external
       // edit, which would clear the selection restore.
       this._selfEditsInFlight += 1;
