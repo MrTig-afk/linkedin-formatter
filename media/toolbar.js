@@ -593,6 +593,13 @@
     }
     body.replaceChildren(frag);
 
+    // M4.5: an edit we did not make - an AI CLI writing to the file, an undo,
+    // or typing in the left editor - has moved the text underneath the offset
+    // this webview is holding. Disarm rather than insert somewhere wrong; the
+    // next click re-arms. Dropping a keystroke is recoverable, putting one in
+    // the wrong place silently is not.
+    if (payload.external === true) { caretOffset = null; }
+
     var c = payload.counter;
     var counterEl = document.getElementById('char-counter');
     if (counterEl && c && typeof c.count === 'number' && typeof c.limit === 'number') {

@@ -59,6 +59,16 @@ export class PreviewPanel {
    */
   private _hasRendered = false;
   private _lastStructuralKey = '';
+  /**
+   * M4.5: the next render was caused by an edit we did NOT make - an AI CLI
+   * writing to the file, an undo, or the user typing in the left editor.
+   *
+   * The webview advances its caret optimistically while typing, because the
+   * document round trip is slower than a keystroke. An external edit moves the
+   * text underneath that assumption, so the offset it holds is no longer
+   * trustworthy and typing must disarm rather than insert somewhere wrong.
+   */
+  private _pendingExternal = false;
   /** Toolbar state (family|bold|italic) as of the last render. */
   private _lastToolbarKey = '';
   /** ~/.gitconfig identity, read once per panel; nulls when unavailable. */
@@ -203,6 +213,7 @@ export class PreviewPanel {
       } else {
         // External change (typing, undo): the stored offsets are stale.
         this._restoreSelection = null;
+        this._pendingExternal = true;
       }
       this.update(event.document);
     }, null, this._disposables);
@@ -483,14 +494,18 @@ export class PreviewPanel {
     ].join('|');
 
     if (this._hasRendered && structuralKey === this._lastStructuralKey) {
+      const external = this._pendingExternal;
+      this._pendingExternal = false;
       void this._panel.webview.postMessage({
         type: 'render',
         units: buildOffsetUnits(text, markers),
         counter: { count, limit: LINKEDIN_POST_LIMIT, state },
+        external,
       });
       return;
     }
 
+    this._pendingExternal = false;
     this._hasRendered = true;
     this._lastStructuralKey = structuralKey;
 
