@@ -17,11 +17,44 @@ import { countCharacters, getCounterState, LINKEDIN_POST_LIMIT, type CountingUni
  * listing. If a description is vague, the tool is effectively undiscoverable.
  */
 
+export interface ToolAnnotations {
+  readonly readOnlyHint: true;
+  readonly destructiveHint: false;
+  readonly idempotentHint: true;
+  readonly openWorldHint: false;
+}
+
 export interface ToolDef {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
+  readonly annotations: ToolAnnotations;
 }
+
+/**
+ * Every tool here is a pure string transformation: nothing touches the disk,
+ * a socket or a clock. Clients use these hints to decide whether to prompt
+ * before running a tool, so accurate hints mean a user is never asked to
+ * confirm something that cannot alter anything.
+ */
+const PURE_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
+
+/**
+ * Surfaced by clients at session start. A second route for the convention to
+ * reach a model, independent of the individual tool descriptions.
+ */
+export const SERVER_INSTRUCTIONS =
+  'Formats text for LinkedIn using real Unicode characters. LinkedIn has no '
+  + 'formatting controls, so Markdown does not work: **bold** pastes in as '
+  + 'literal asterisks. Save posts as files ending .linkedin - the LinkedIn '
+  + 'Formatter VS Code extension renders those as a live preview. Use '
+  + 'apply_family to style text, and count_characters before posting, because '
+  + 'LinkedIn counts UTF-16 code units so a styled character costs two.';
 
 const CONVENTION =
   'LinkedIn posts belong in a file ending .linkedin, written as plain text '
@@ -30,7 +63,7 @@ const CONVENTION =
 
 const str = (description: string) => ({ type: 'string', description });
 
-export const TOOLS: readonly ToolDef[] = [
+const TOOL_DEFS: readonly Omit<ToolDef, 'annotations'>[] = [
   {
     name: 'apply_style',
     description:
@@ -117,14 +150,25 @@ export const TOOLS: readonly ToolDef[] = [
     description:
       'List the font families available for apply_family, and which of bold '
       + 'and italic each one supports in Unicode.',
-    inputSchema: { type: 'object', properties: {} },
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'list_styles',
     description: 'List every letterform style id and combining mark id.',
-    inputSchema: { type: 'object', properties: {} },
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
 ];
+
+/**
+ * The tool list, in a FIXED order. The spec asks for deterministic ordering so
+ * client-side prompt caching keeps working across sessions.
+ */
+export const TOOLS: readonly ToolDef[] =
+  TOOL_DEFS.map(d => ({ ...d, annotations: PURE_ANNOTATIONS }));
+
+/** For the transport layer: an unknown tool NAME is a protocol error, not a
+ *  tool-execution error (spec: unknown tool -> JSON-RPC error). */
+export const TOOL_NAMES: ReadonlySet<string> = new Set(TOOL_DEFS.map(d => d.name));
 
 export interface ToolResult {
   readonly text: string;
