@@ -51,10 +51,15 @@ const PURE_ANNOTATIONS: ToolAnnotations = {
 export const SERVER_INSTRUCTIONS =
   'Formats text for LinkedIn using real Unicode characters. LinkedIn has no '
   + 'formatting controls, so Markdown does not work: **bold** pastes in as '
-  + 'literal asterisks. Save posts as files ending .linkedin - the LinkedIn '
-  + 'Formatter VS Code extension renders those as a live preview. Use '
-  + 'apply_family to style text, and count_characters before posting, because '
-  + 'LinkedIn counts UTF-16 code units so a styled character costs two.';
+  + 'literal asterisks. Use apply_family to style text, and count_characters '
+  + 'before posting, because LinkedIn counts UTF-16 code units and a styled '
+  + 'character costs two. '
+  + 'FULL WORKFLOW when composing a whole post: style the text with these '
+  + 'tools, save it to a file ending .linkedin, then open that file in VS '
+  + 'Code (for example: code draft.linkedin). The LinkedIn Formatter '
+  + 'extension renders it as a live LinkedIn card beside the editor, where '
+  + 'the user reviews and adjusts by hand before posting. Give the user the '
+  + 'preview, not just the raw styled text.';
 
 const CONVENTION =
   'LinkedIn posts belong in a file ending .linkedin, written as plain text '
