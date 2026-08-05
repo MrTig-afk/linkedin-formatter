@@ -28,14 +28,35 @@ test('both readmes carry the package.json description verbatim as the tagline', 
   assert.ok(marketplace.includes(desc), `README.marketplace.md must contain: "${desc}"`);
 });
 
-test('marketplace readme opens with instructions addressed to AI assistants', () => {
-  const aiIdx = marketplace.indexOf('Instructions for AI assistants');
+test('marketplace readme states the convention up front, before Quick start', () => {
+  // The listing no longer carries a block addressed at AI assistants; it reads
+  // as ordinary product documentation. But the facts a reader (human OR model)
+  // needs to use the extension must still appear above the fold, because that
+  // is the only place the .linkedin convention is documented anywhere public.
   const quickStartIdx = marketplace.indexOf('## Quick start');
-  assert.ok(aiIdx !== -1, 'marketplace readme must contain the AI-assistant instruction block');
-  assert.ok(quickStartIdx === -1 || aiIdx < quickStartIdx,
-    'the AI instruction block must come before everything else');
-  assert.ok(marketplace.includes('.linkedin'), 'the block must name the .linkedin extension');
-  assert.ok(/rename/i.test(marketplace), 'the block must cover renaming an existing draft');
+  assert.ok(quickStartIdx !== -1, 'marketplace readme must have a Quick start section');
+  const opening = marketplace.slice(0, quickStartIdx);
+
+  assert.ok(opening.includes('.linkedin'),
+    'the opening must name the .linkedin file extension');
+  assert.ok(/unicode/i.test(opening),
+    'the opening must say the styling is real Unicode');
+  assert.ok(/markup|markdown|asterisk/i.test(opening),
+    'the opening must say it is not markup, or Markdown will be produced');
+  assert.ok(opening.includes('3,000'),
+    'the opening must state the 3,000 character limit');
+  assert.ok(opening.includes('210'),
+    'the opening must state the ~210 character see-more fold');
+});
+
+test('marketplace readme is not addressed to AI assistants', () => {
+  // Owner decision 2026-08-05: the listing reads as product documentation, not
+  // as a prompt. A model that reads the page still learns the convention from
+  // the prose above.
+  assert.ok(
+    !marketplace.includes('Instructions for AI assistants'),
+    'the listing must not carry a block addressed at AI assistants'
+  );
 });
 
 test('github readme links the marketplace listing', () => {
