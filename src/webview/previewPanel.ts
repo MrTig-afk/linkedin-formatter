@@ -81,6 +81,20 @@ export class PreviewPanel {
    * monospace back to serif restores the bold the user asked for rather than
    * having silently discarded it.
    */
+  /**
+   * The card caret, owned HERE rather than in the webview.
+   *
+   * The webview cannot know how long an inserted character will be: it
+   * sends "a", and styling turns that into a two-unit astral character. It
+   * used to advance its own caret by the raw length, drifting one unit per
+   * keystroke, so every insert after the first landed INSIDE the previous
+   * styled character and split it into orphaned surrogates.
+   *
+   * Only this side knows the styled length, so only this side can advance
+   * the caret correctly. The webview keeps a copy purely to draw with, and
+   * is corrected by the caret echoed back on every render.
+   */
+  private _cardCaret: number | null = null;
   private _activeBold = false;
   private _activeItalic = false;
   /** Toolbar state (family|bold|italic) as of the last render. */
@@ -228,6 +242,8 @@ export class PreviewPanel {
         // External change (typing, undo): the stored offsets are stale.
         this._restoreSelection = null;
         this._pendingExternal = true;
+        // Someone else moved the text; our offset means nothing now.
+        this._cardCaret = null;
       }
       this.update(event.document);
     }, null, this._disposables);
@@ -335,6 +351,8 @@ export class PreviewPanel {
 
     if (message.type === 'cursorSync') {
       this._restoreSelection = null;
+      // A click is the user stating where the caret is; trust it.
+      this._cardCaret = message.offset;
       const editor = vscode.window.visibleTextEditors.find(
         e => e.document.uri.toString() === this._trackedUri
       );
@@ -352,7 +370,11 @@ export class PreviewPanel {
     if (message.type === 'insertText') {
       // M4.1: typing in the card. The offset is already validated and clamped
       // to the document by validateMessage, so positionAt cannot throw here.
-      const position = doc.positionAt(message.offset);
+      // The message offset is advisory: it is what the webview believed
+      // when the key was pressed. Our own caret wins whenever we have one,
+      // because during a fast burst the webview is a keystroke behind.
+      const insertAt = this._cardCaret ?? message.offset;
+      const position = doc.positionAt(insertAt);
       // M4.4 + issue #2: typed text takes the toolbar's active family AND
       // whichever axes are latched. nearestSupported cascades when the
       // family cannot express the intent (monospace has no bold): exact ->
@@ -370,7 +392,7 @@ export class PreviewPanel {
       // a surrogate pair. Inserting there would split the character; reading
       // back from there sees a lone surrogate and detects no style at all.
       // Snap backward to the start of the character first.
-      const safeOffset = snapToCodePointBoundary(full, message.offset, 'backward');
+      const safeOffset = snapToCodePointBoundary(full, insertAt, 'backward');
 
       // Inherit from the character before the caret; if that is plain (or the
       // caret is at the very start of a styled run), try the character after,
@@ -384,6 +406,8 @@ export class PreviewPanel {
         : applyStyle(message.text, style);
       const edit = new vscode.WorkspaceEdit();
       edit.insert(doc.uri, position, styled);
+      // Advance by what was ACTUALLY inserted, not by what was typed.
+      this._cardCaret = insertAt + styled.length;
       // Mark as ours so the resulting change is not mistaken for an external
       // edit, which would clear the selection restore.
       this._selfEditsInFlight += 1;
@@ -404,6 +428,7 @@ export class PreviewPanel {
         doc.positionAt(message.start), doc.positionAt(message.end));
       const edit = new vscode.WorkspaceEdit();
       edit.replace(doc.uri, range, message.text);
+      this._cardCaret = message.start + message.text.length;
       this._selfEditsInFlight += 1;
       vscode.workspace.applyEdit(edit).then(
         undefined,
@@ -546,6 +571,9 @@ export class PreviewPanel {
         units: buildOffsetUnits(text, markers),
         counter: { count, limit: LINKEDIN_POST_LIMIT, state },
         external,
+        // Authoritative caret. The webview draws with its own optimistic
+        // copy between keystrokes, then snaps to this when the render lands.
+        caret: this._cardCaret,
       });
       return;
     }

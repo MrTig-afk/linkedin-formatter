@@ -621,6 +621,10 @@
         text: text,
         offset: caretOffset
       });
+      // Optimistic, and deliberately approximate: styling can change the
+      // length and only the extension knows by how much. This just keeps the
+      // caret roughly right for the few milliseconds until the render lands
+      // and replaces it with the authoritative value.
       caretOffset += text.length;
       desiredX = null;   // typing sets a new column
       drawCardCaret();   // keep the visible caret with the text, not behind it
@@ -703,6 +707,13 @@
       // it matters.
       if (caretOffset !== null) { flashInterrupted(); }
       caretOffset = null;
+    } else if (typeof payload.caret === 'number' && caretOffset !== null) {
+      // The extension owns the caret, because only it knows how long the
+      // styled text it inserted actually was. Our optimistic value exists
+      // solely to draw between keystrokes; correct it whenever the truth
+      // arrives. Without this the two drift by one unit per styled character
+      // and inserts start landing inside the previous one.
+      caretOffset = payload.caret;
     }
 
     var c = payload.counter;
