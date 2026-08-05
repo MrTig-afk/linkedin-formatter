@@ -163,10 +163,9 @@ Bold and italic act in the current font family (the preview's dropdown, else
 
 ## Coming next
 
-- **MCP integration**: the conversion engine as a Model Context Protocol
-  server and CLI, so AI agents can produce styled posts directly.
 - **Editing in the preview pane**: type into the rendered card itself, not
-  only the left editor.
+  only the left editor. Text typed on the right lands in the file on the
+  left, already in real Unicode.
 
 ## Connect
 

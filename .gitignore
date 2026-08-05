@@ -31,7 +31,7 @@ RUNBOOK.md
 assets/
 social-media/
 project_summary.txt
-docs/
+# docs/ - the PRD is the committed source of truth
 *.tex
 
 # user post drafts - never committed
