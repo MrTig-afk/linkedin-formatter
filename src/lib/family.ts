@@ -474,11 +474,16 @@ export function resolveTypingStyle(
   pendingBold: boolean | null,
   pendingItalic: boolean | null,
   fallbackFamily: FamilyId,
+  pendingFamily: FamilyId | null = null,
 ): string {
   const inherited = inheritedStyleAt(fullText, offset);
   const base = inherited !== null ? decompose(inherited.id) : null;
 
-  const family = base !== null ? base.family : fallbackFamily;
+  // An explicit dropdown pick at a collapsed caret beats inheritance, the
+  // way choosing a font in Word does: the very next thing typed uses it.
+  // Without this, picking fullwidth on a fresh line was silently ignored
+  // because the empty line inherited plain from the paragraph above.
+  const family = pendingFamily ?? (base !== null ? base.family : fallbackFamily);
   const bold = pendingBold ?? (base !== null ? base.bold : false);
   const italic = pendingItalic ?? (base !== null ? base.italic : false);
 

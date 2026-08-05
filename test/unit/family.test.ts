@@ -560,6 +560,33 @@ test('inherited family carries: typing after script with pending bold gives bold
   assert.equal(resolveTypingStyle(doc, doc.length, true, null, 'serif'), 'bold-script');
 });
 
+test('a dropdown family pick overrides inheritance for the next typing run', () => {
+  // The reported bug: Enter onto a fresh line, pick fullwidth, type - the
+  // empty line inherited plain from the paragraph above and the pick was
+  // silently ignored.
+  const doc = 'plain paragraph\n';
+  assert.equal(
+    resolveTypingStyle(doc, doc.length, null, null, 'serif', 'fullwidth'),
+    'fullwidth');
+  // It also beats a styled inheritance, not just plain.
+  const bold = boldText('bold');
+  assert.equal(
+    resolveTypingStyle(bold, bold.length, null, null, 'serif', 'fullwidth'),
+    'fullwidth');
+});
+
+test('a pending family keeps inherited axes when the target supports them', () => {
+  const doc = boldText('bold');
+  assert.equal(
+    resolveTypingStyle(doc, doc.length, null, null, 'serif', 'sans-serif'),
+    'sans-serif-bold');
+});
+
+test('no pending family leaves the resolver exactly as before', () => {
+  const doc = boldText('bold');
+  assert.equal(resolveTypingStyle(doc, doc.length, null, null, 'serif', null), 'bold');
+});
+
 test('the sparse matrix cascades: pending bold in a monospace run stays monospace', () => {
   const doc = applyStyle('code', styleById('monospace'));
   assert.equal(resolveTypingStyle(doc, doc.length, true, null, 'serif'), 'monospace');

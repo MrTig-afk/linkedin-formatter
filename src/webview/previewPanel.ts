@@ -97,6 +97,12 @@ export class PreviewPanel {
    */
   private _cardCaret: number | null = null;
   private _pendingBold: boolean | null = null;
+  /**
+   * Family picked from the dropdown at a COLLAPSED caret. Overrides
+   * inheritance for the next typing run, then drops when the caret moves -
+   * the same lifecycle as the pending bold/italic axes.
+   */
+  private _pendingFamily: FamilyId | null = null;
   private _pendingItalic: boolean | null = null;
   /** Which side of a soft-wrap the caret sticks to (see SetCaretMessage). */
   private _cardCaretAssoc: 'before' | 'after' = 'after';
@@ -423,6 +429,10 @@ export class PreviewPanel {
 
     if (message.type === 'setFamily') {
       this._activeFamily = message.family;
+      // Dropdown pick with no selection: latch it for the next typing run,
+      // overriding whatever the line would otherwise inherit.
+      this._pendingFamily = message.family;
+      this.update(doc);   // re-render so the toolbar reflects the latch
       return;
     }
 
@@ -444,7 +454,8 @@ export class PreviewPanel {
         const latchText = doc.getText();
         const at = this._cardCaret ?? latchText.length;
         const effective = decompose(resolveTypingStyle(
-          latchText, at, this._pendingBold, this._pendingItalic, this._activeFamily));
+          latchText, at, this._pendingBold, this._pendingItalic,
+          this._activeFamily, this._pendingFamily));
         if (message.axis === 'bold') {
           this._pendingBold = !(effective?.bold ?? false);
         } else {
@@ -492,11 +503,12 @@ export class PreviewPanel {
       // A collapsed caret ends any selection; without this the next render
       // would repaint a selection the user has already clicked away.
       this._restoreSelection = null;
-      // Moving the caret drops any pending Ctrl+B/I, as a word processor
-      // does. (The render echo does not pass through here, so a pending
-      // format survives an actual typing run.)
+      // Moving the caret drops any pending Ctrl+B/I or dropdown family, as
+      // a word processor does. (The render echo does not pass through here,
+      // so a pending format survives an actual typing run.)
       this._pendingBold = null;
       this._pendingItalic = null;
+      this._pendingFamily = null;
       return;
     }
 
@@ -507,6 +519,7 @@ export class PreviewPanel {
       this._cardCaret = null;
       this._pendingBold = null;
       this._pendingItalic = null;
+      this._pendingFamily = null;
       return;
     }
 
@@ -547,7 +560,8 @@ export class PreviewPanel {
           + ` (msg.offset=${msg.offset}, _cardCaret won=${this._cardCaret !== null})`);
 
         const styleId = resolveTypingStyle(
-          full, insertAt, this._pendingBold, this._pendingItalic, this._activeFamily);
+          full, insertAt, this._pendingBold, this._pendingItalic,
+          this._activeFamily, this._pendingFamily);
         const style = ALL_STYLES.find(st => st.id === styleId);
         const styled = style === undefined
           ? msg.text                         // 'plain': serif regular IS ASCII
@@ -610,7 +624,8 @@ export class PreviewPanel {
           : (() => {
               const styleId = resolveTypingStyle(
                 full, start,
-                this._pendingBold, this._pendingItalic, this._activeFamily);
+                this._pendingBold, this._pendingItalic,
+                this._activeFamily, this._pendingFamily);
               const st = ALL_STYLES.find(x => x.id === styleId);
               return st === undefined ? msg.text : applyStyleForTyping(msg.text, st);
             })();
@@ -885,7 +900,8 @@ export class PreviewPanel {
       // disagree with the text that then appears.
       const at = this._cardCaret ?? text.length;
       const effective = decompose(resolveTypingStyle(
-        text, at, this._pendingBold, this._pendingItalic, this._activeFamily));
+        text, at, this._pendingBold, this._pendingItalic,
+        this._activeFamily, this._pendingFamily));
       const family = effective?.family ?? this._activeFamily;
       const slots = FAMILY_MATRIX.get(family);
       return {
