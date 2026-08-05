@@ -92,7 +92,7 @@ body {
      further down the list is never consulted, so emoji render as flat
      outlines. The symbol faces also supply the enclosed alphanumerics
      (circled, squared, parenthesized) that text faces lack. */
-  font-family: -apple-system, "Segoe UI", Roboto,
+  font-family: "Enclosed Alphanumerics Text", -apple-system, "Segoe UI", Roboto,
     "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji",
     "Segoe UI Symbol", "Noto Sans Symbols 2", sans-serif;
   background: var(--canvas);
@@ -674,4 +674,24 @@ body {
    as ::selection so mouse and keyboard selections are indistinguishable. */
 span.kbd-selected {
   background: var(--selection);
+}
+
+/* --- Enclosed alphanumerics render as text, never as emoji ---
+
+   A handful of the enclosed letters double as emoji: negative-squared A/B/O/P
+   are the blood-type emoji, circled M is the metro sign. Once the colour
+   emoji faces moved ahead of the generic family (needed so real emoji render
+   in colour), those letters started appearing as red emoji glyphs in the
+   middle of styled words.
+
+   This face claims ONLY the enclosed-alphanumeric ranges and maps them to the
+   monochrome symbol font, so a negative-squared A matches the rest of its
+   alphabet while actual emoji stay colourful. local() fails harmlessly on
+   systems without the font and the normal stack takes over. */
+@font-face {
+  font-family: "Enclosed Alphanumerics Text";
+  src: local("Segoe UI Symbol");
+  unicode-range: U+2460-24EA, U+2474-247C, U+249C-24B5,
+                 U+FF10-FF19, U+FF21-FF3A, U+FF41-FF5A,
+                 U+1F130-1F149, U+1F170-1F189;
 }

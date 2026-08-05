@@ -6,7 +6,7 @@ import { validateMessage } from '../lib/validateMessage';
 import type { WebviewMessage } from '../lib/messageContract';
 import { toggleStyle, clearAllFormatting, snapToCodePointBoundary } from '../lib/toggleStyle';
 import { convertFamily, toggleAxis, summarizeSelection, effectiveFamily, decompose, resolveTypingStyle, FAMILY_IDS, FAMILY_MATRIX, type FamilyId } from '../lib/family';
-import { ALL_STYLES, applyStyle } from '../lib/convert';
+import { ALL_STYLES, applyStyleForTyping } from '../lib/convert';
 import { countCharacters, getCounterState, LINKEDIN_POST_LIMIT, type CountingUnit } from '../lib/charCount';
 import { parseGitConfig, initialsOf, type GitIdentity } from '../lib/identity';
 import * as os from 'node:os';
@@ -517,7 +517,7 @@ export class PreviewPanel {
         const style = ALL_STYLES.find(st => st.id === styleId);
         const styled = style === undefined
           ? msg.text                         // 'plain': serif regular IS ASCII
-          : applyStyle(msg.text, style);
+          : applyStyleForTyping(msg.text, style);
 
         this._selfEditsInFlight += 1;
         // Advance by what was ACTUALLY inserted, leaning on the character
@@ -575,7 +575,7 @@ export class PreviewPanel {
                 full, start,
                 this._pendingBold, this._pendingItalic, this._activeFamily);
               const st = ALL_STYLES.find(x => x.id === styleId);
-              return st === undefined ? msg.text : applyStyle(msg.text, st);
+              return st === undefined ? msg.text : applyStyleForTyping(msg.text, st);
             })();
         const edit = new vscode.WorkspaceEdit();
         edit.replace(doc.uri, range, replacement);

@@ -2,7 +2,7 @@ import type { CombiningMark } from './types';
 import { MATH_STYLE_BY_ID } from './styles';
 import { NON_MATH_STYLE_BY_ID } from './palettes';
 import { COMBINING_MARKS, applyCombiningMark, stripCombiningMark } from './combining';
-import { detectFormatting, styledCodePoint, styleBefore, styleAfter } from './convert';
+import { detectFormatting, styledCodePoint, inheritedStyleAt } from './convert';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -475,7 +475,7 @@ export function resolveTypingStyle(
   pendingItalic: boolean | null,
   fallbackFamily: FamilyId,
 ): string {
-  const inherited = styleBefore(fullText, offset) ?? styleAfter(fullText, offset);
+  const inherited = inheritedStyleAt(fullText, offset);
   const base = inherited !== null ? decompose(inherited.id) : null;
 
   const family = base !== null ? base.family : fallbackFamily;

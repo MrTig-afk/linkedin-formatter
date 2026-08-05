@@ -236,3 +236,75 @@ export function styleAfter(fullText: string, offset: number): Style | null {
   const detected = detectStyle(cp);
   return detected === null ? null : detected.style;
 }
+
+/**
+ * The style typing should inherit at `offset` - the Word model, precisely:
+ *
+ *   1. Walk BACK within the current line, skipping spaces, tabs and combining
+ *      marks. A styled character continues its run; a PLAIN character means
+ *      plain, decisively - sitting after "plain, " before a bold word must
+ *      not pick up the bold ahead.
+ *   2. At the start of a line, adopt the line's own leading run (skipping
+ *      leading whitespace forward) - clicking at the front of a bold line and
+ *      typing joins that line's style.
+ *   3. Only when the line is EMPTY both ways does the previous paragraph
+ *      decide - which is what makes Enter-at-the-end-of-a-bold-run then
+ *      typing continue bold, without a click on a plain paragraph ever
+ *      inheriting the styled title above it.
+ *
+ * (The first rule set skipped ALL whitespace backward including newlines, so
+ * a click at the top of a plain paragraph "continued" the bold heading above
+ * it. That is the bug this replaces.)
+ */
+export function inheritedStyleAt(fullText: string, offset: number): Style | null {
+  const isMark = (cp: number): boolean => MARK_CODEPOINTS.has(cp);
+
+  // 1. Back within the line.
+  const before = [...fullText.slice(0, offset)];
+  for (let i = before.length - 1; i >= 0; i--) {
+    const ch = before[i];
+    if (ch === '\n') { break; }
+    const cp = ch.codePointAt(0)!;
+    if (ch === ' ' || ch === '\t' || isMark(cp)) { continue; }
+    const d = detectStyle(cp);
+    return d !== null ? d.style : null;   // plain char: plain, decisively
+  }
+
+  // 2. Forward within the line.
+  const rest = [...fullText.slice(offset)];
+  for (const ch of rest) {
+    if (ch === '\n') { break; }
+    const cp = ch.codePointAt(0)!;
+    if (ch === ' ' || ch === '\t' || isMark(cp)) { continue; }
+    const d = detectStyle(cp);
+    return d !== null ? d.style : null;
+  }
+
+  // 3. Empty line: the previous paragraph's trailing run decides.
+  for (let i = before.length - 1; i >= 0; i--) {
+    const cp = before[i].codePointAt(0)!;
+    if (/\s/.test(before[i]) || isMark(cp)) { continue; }
+    const d = detectStyle(cp);
+    return d !== null ? d.style : null;
+  }
+  return null;
+}
+
+/**
+ * Apply a style to TYPED text, folding case where the style demands it.
+ *
+ * applyStyle is strictly fail-closed, which is right for restyling existing
+ * text but wrong for typing: inside an uppercase-only run (squared, negative
+ * squared) a typed 'a' must become the squared A, not stay plain - the same
+ * fold convertFamily has always done on the toolbar path. Without this the
+ * two paths disagreed and lowercase typed into a squared run silently came
+ * out plain.
+ */
+export function applyStyleForTyping(text: string, style: Style): string {
+  const folded = style.coverage === 'upperOnly'
+    ? text.toUpperCase()
+    : style.coverage === 'lowerOnly'
+      ? text.toLowerCase()
+      : text;
+  return applyStyle(folded, style);
+}
