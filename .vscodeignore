@@ -34,3 +34,5 @@ cli/**
 cli-build.js
 src/cli/**
 mcp/**
+mcp-build.js
+src/mcp/**
