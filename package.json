@@ -3,9 +3,10 @@
   "displayName": "LinkedIn Formatter",
   "publisher": "kaushiknaru",
   "description": "Format LinkedIn posts with Unicode styles from a live preview beside your editor.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "license": "MIT",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -18,13 +19,20 @@
     }
   },
   "main": "./dist/extension.js",
-  "activationEvents": ["onLanguage:linkedin", "onWebviewPanel:linkedinFormatter.preview"],
+  "activationEvents": [
+    "onLanguage:linkedin",
+    "onWebviewPanel:linkedinFormatter.preview"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "linkedin",
-        "extensions": [".linkedin"],
-        "aliases": ["LinkedIn Post"]
+        "extensions": [
+          ".linkedin"
+        ],
+        "aliases": [
+          "LinkedIn Post"
+        ]
       }
     ],
     "commands": [
@@ -88,7 +96,10 @@
       "properties": {
         "linkedinFormatter.countingUnit": {
           "type": "string",
-          "enum": ["codepoints", "utf16"],
+          "enum": [
+            "codepoints",
+            "utf16"
+          ],
           "default": "utf16",
           "description": "How to count characters for the 3,000-character limit. LinkedIn counts UTF-16 code units (verified empirically: styled characters count as 2), so 'utf16' matches the composer. 'codepoints' counts visible-ish Unicode code points instead."
         },
@@ -111,7 +122,12 @@
         },
         "linkedinFormatter.cardTheme": {
           "type": "string",
-          "enum": ["daylight", "midnight", "dim", "editor"],
+          "enum": [
+            "daylight",
+            "midnight",
+            "dim",
+            "editor"
+          ],
           "default": "editor",
           "enumDescriptions": [
             "LinkedIn's classic light look.",
@@ -133,7 +149,19 @@
         },
         "linkedinFormatter.defaultFamily": {
           "type": "string",
-          "enum": ["serif", "sans-serif", "script", "fraktur", "monospace", "double-struck", "circled", "squared", "negative-squared", "fullwidth", "parenthesized"],
+          "enum": [
+            "serif",
+            "sans-serif",
+            "script",
+            "fraktur",
+            "monospace",
+            "double-struck",
+            "circled",
+            "squared",
+            "negative-squared",
+            "fullwidth",
+            "parenthesized"
+          ],
           "default": "serif",
           "description": "Font family the bold/italic keyboard shortcuts act in when no preview panel is open. With a preview open, its family dropdown wins."
         }

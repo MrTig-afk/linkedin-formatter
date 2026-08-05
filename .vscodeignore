@@ -3,6 +3,8 @@
 .vscode-test.mjs
 .claude/**
 .pipeline/**
+assets/**
+social-media/**
 src/**
 out/**
 test/**
