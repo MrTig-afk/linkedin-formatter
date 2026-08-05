@@ -560,6 +560,25 @@
     return best;
   }
 
+
+  /**
+   * Move the caret AND tell the extension, immediately.
+   *
+   * Every path that moves the caret must go through here. The two sides were
+   * previously desynchronised in two ways: a click armed the webview at once
+   * but only reached the extension 200ms later via the deferred cursorSync,
+   * and arrow-key movement was never reported at all. Anything typed in
+   * those windows was inserted wherever the extension last believed the
+   * caret to be - usually somewhere further up the post.
+   */
+  function setCaret(offset) {
+    caretOffset = offset;
+    drawCardCaret();
+    if (offset !== null) {
+      vscode.postMessage({ type: 'setCaret', offset: offset });
+    }
+  }
+
   function collapsedCaretOffset() {
     var sel = window.getSelection();
     if (!sel || !sel.isCollapsed || sel.rangeCount === 0) { return null; }
@@ -588,10 +607,9 @@
         clearCardCaret();
         return;
       }
-      caretOffset = offset;
       desiredX = null;
       typeCatcher.focus({ preventScroll: true });
-      drawCardCaret();
+      setCaret(offset);
     });
 
     // 'input' fires once per committed change, including at the end of an IME
@@ -735,6 +753,8 @@
       // solely to draw between keystrokes; correct it whenever the truth
       // arrives. Without this the two drift by one unit per styled character
       // and inserts start landing inside the previous one.
+      // Assign directly, never through setCaret: this value CAME from the
+      // extension, and posting it back would be an endless round trip.
       caretOffset = payload.caret;
       drawCardCaret();
     }
@@ -846,7 +866,7 @@
     var sel = resolveSelectionOffsets();
     if (!sel || sel.start === sel.end) { return false; }
     vscode.postMessage({ type: 'replaceText', start: sel.start, end: sel.end, text: '' });
-    caretOffset = sel.start;
+    setCaret(sel.start);
     return true;
   }
 
@@ -856,7 +876,7 @@
     var r = spanEndingAt(caretOffset);
     if (!r) { return false; }
     vscode.postMessage({ type: 'replaceText', start: r.start, end: r.end, text: '' });
-    caretOffset = r.start;
+    setCaret(r.start);
     return true;
   }
 
@@ -875,7 +895,7 @@
     var from = wordStartBefore(caretOffset);
     if (from === null || from >= caretOffset) { return false; }
     vscode.postMessage({ type: 'replaceText', start: from, end: caretOffset, text: '' });
-    caretOffset = from;
+    setCaret(from);
     return true;
   }
 
@@ -1002,8 +1022,7 @@
     if (caretOffset === null) { return false; }
     if (!keepColumn) { desiredX = null; }
     if (next === null) { return true; }   // handled: at an edge, do not fall through
-    caretOffset = next;
-    drawCardCaret();
+    setCaret(next);
     return true;
   }
 
@@ -1023,7 +1042,9 @@
   function insertNewline() {
     if (caretOffset === null) { return false; }
     vscode.postMessage({ type: 'insertText', text: '\n', offset: caretOffset });
-    caretOffset += 1;
+    // Not advanced locally. The extension owns the caret and sends the true
+    // position back with the render; guessing here is how the caret ended up
+    // drawing in the wrong place.
     desiredX = null;
     return true;
   }

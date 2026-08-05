@@ -360,6 +360,13 @@ export class PreviewPanel {
       return;
     }
 
+    if (message.type === 'setCaret') {
+      // Cheap and frequent: no edit, no render, just the truth about where
+      // the caret is so the next insert lands in the right place.
+      this._cardCaret = message.offset;
+      return;
+    }
+
     if (message.type === 'cursorSync') {
       this._restoreSelection = null;
       // A click is the user stating where the caret is; trust it.

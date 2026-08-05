@@ -98,6 +98,23 @@ export interface ReplaceTextMessage {
 }
 
 /**
+ * The card caret moved, reported IMMEDIATELY.
+ *
+ * Distinct from cursorSync, which is deferred 200ms (to avoid fighting a
+ * double-click) and also moves the LEFT editor. This one only tells the
+ * extension where the card caret is.
+ *
+ * It exists because the two sides were desynchronised: the webview armed its
+ * caret on click but the extension only heard 200ms later, and never heard
+ * about arrow-key movement at all. Typing in that window inserted text at
+ * wherever the extension last believed the caret was.
+ */
+export interface SetCaretMessage {
+  readonly type: 'setCaret';
+  readonly offset: number;
+}
+
+/**
  * The webview's current text selection, reported on mouseup so the
  * extension can keep it highlighted across re-renders and reflect its
  * family/axes in the toolbar. start === end means no selection.
@@ -118,6 +135,7 @@ export type WebviewMessage =
   | SetFamilyMessage
   | ConvertFamilyMessage
   | ToggleAxisMessage
+  | SetCaretMessage
   | SelectionStateMessage
   | UndoRedoMessage;
 
