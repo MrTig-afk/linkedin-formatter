@@ -325,6 +325,13 @@ export class PreviewPanel {
     // (typing, emoji) is visible. Re-render only when the caret moved.
     vscode.window.onDidChangeTextEditorSelection((event) => {
       if (event.textEditor.document.uri.toString() !== this._trackedUri) { return; }
+      // The only thing this update can change is the caret MIRROR, and the
+      // mirror is drawn only while the editor has focus. While the user works
+      // in the card, every insert shifts the editor cursor and used to fire a
+      // second, fully redundant render per keystroke - the trace showed the
+      // traffic doubling after any cursorSync. Skip when the editor is not
+      // the active one.
+      if (vscode.window.activeTextEditor !== event.textEditor) { return; }
       this.log('editor selection changed -> update()');
       const offset = event.textEditor.document.offsetAt(event.selections[0].active);
       if (offset === this._lastCaretOffset) { return; }
