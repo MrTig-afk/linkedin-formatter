@@ -193,6 +193,17 @@ ${markBtnHtml}
     </div>
   </div>
   ${counterHtml}
+  <!--
+    M4.1 type catcher. Keystrokes are captured here rather than by making the
+    card contenteditable (PRD Q1): the card's DOM is regenerated from offset
+    spans on every render, and contenteditable would put the browser on that
+    same DOM as a second writer. This input is focusable but visually absent -
+    it must not be display:none, which cannot take focus.
+    aria-hidden with a label so screen readers do not announce an empty box.
+  -->
+  <input type="text" id="type-catcher" class="type-catcher"
+         autocomplete="off" autocorrect="off" autocapitalize="off"
+         spellcheck="false" tabindex="-1" aria-label="Post text input">
   <script type="application/json" id="emoji-data" nonce="${nonce}">${emojiDataJson}</script>
 ${restoreJson}  <script nonce="${nonce}">${scriptText}</script>
 </body>

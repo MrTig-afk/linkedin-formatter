@@ -55,6 +55,31 @@ export interface UndoRedoMessage {
 }
 
 /**
+ * v2 (PRD S7.4, M4.1): text typed directly into the preview card.
+ *
+ * The webview captures keystrokes in a hidden input rather than making the
+ * card contenteditable, so the card's DOM stays generated-once-per-render
+ * and the browser never becomes a second writer to it (PRD Q1).
+ *
+ * `text` is what the user typed, `offset` is where it goes. Both are
+ * untrusted: typing produces far more messages than styling ever did, and
+ * the boundary does not get looser because it is busier.
+ */
+export interface InsertTextMessage {
+  readonly type: 'insertText';
+  readonly text: string;    // 1..MAX_INSERT_TEXT_LENGTH UTF-16 code units
+  readonly offset: number;  // UTF-16 code unit offset, 0-based
+}
+
+/**
+ * Upper bound on a single insert. A keystroke is one or two code units; a
+ * composition commit or paste is longer. Anything past this is not a human
+ * typing, so it is refused rather than clamped - a truncated paste would be
+ * worse than a rejected one.
+ */
+export const MAX_INSERT_TEXT_LENGTH = 10_000;
+
+/**
  * The webview's current text selection, reported on mouseup so the
  * extension can keep it highlighted across re-renders and reflect its
  * family/axes in the toolbar. start === end means no selection.
@@ -70,6 +95,7 @@ export type WebviewMessage =
   | ClearFormattingMessage
   | CursorSyncMessage
   | InsertEmojiMessage
+  | InsertTextMessage
   | SetFamilyMessage
   | ConvertFamilyMessage
   | ToggleAxisMessage

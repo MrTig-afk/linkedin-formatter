@@ -582,3 +582,25 @@ body {
 .emoji-item:hover {
   background: var(--hover);
 }
+
+/* --- M4.1 type catcher --- */
+
+/*
+ * Focusable but invisible. Deliberately NOT display:none or visibility:hidden,
+ * neither of which can receive focus, and not width:0 either - some engines
+ * refuse focus on a zero-area element. 1px, transparent, behind the card.
+ */
+.type-catcher {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  opacity: 0;
+  z-index: -1;
+  background: transparent;
+  color: transparent;
+}

@@ -301,6 +301,25 @@ export class PreviewPanel {
       return;
     }
 
+    if (message.type === 'insertText') {
+      // M4.1: typing in the card. The offset is already validated and clamped
+      // to the document by validateMessage, so positionAt cannot throw here.
+      const position = doc.positionAt(message.offset);
+      const edit = new vscode.WorkspaceEdit();
+      edit.insert(doc.uri, position, message.text);
+      // Mark as ours so the resulting change is not mistaken for an external
+      // edit, which would clear the selection restore.
+      this._selfEditsInFlight += 1;
+      vscode.workspace.applyEdit(edit).then(
+        undefined,
+        (err) => {
+          this._selfEditsInFlight = Math.max(0, this._selfEditsInFlight - 1);
+          console.error('[LinkedIn Preview] insertText failed:', err);
+        },
+      );
+      return;
+    }
+
     if (message.type === 'insertEmoji') {
       const editor = vscode.window.visibleTextEditors.find(
         e => e.document.uri.toString() === this._trackedUri

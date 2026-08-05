@@ -714,3 +714,86 @@ test('selectionState: rejects missing fields', () => {
   const result = validateMessage({ type: 'selectionState' }, DOC_LEN);
   assert.equal(result.valid, false);
 });
+
+// ---------------------------------------------------------------------------
+// insertText (M4.1, PRD S7.4)
+// ---------------------------------------------------------------------------
+
+test('insertText: accepts a single printable character', () => {
+  const result = validateMessage({ type: 'insertText', text: 'a', offset: 3 }, DOC_LEN);
+  assert.equal(result.valid, true);
+  if (result.valid) {
+    assert.equal(result.message.type, 'insertText');
+    assert.equal((result.message as { text: string }).text, 'a');
+    assert.equal((result.message as { offset: number }).offset, 3);
+  }
+});
+
+test('insertText: clamps an offset past the end of the document', () => {
+  const result = validateMessage({ type: 'insertText', text: 'x', offset: DOC_LEN + 500 }, DOC_LEN);
+  assert.equal(result.valid, true);
+  if (result.valid) {
+    assert.equal((result.message as { offset: number }).offset, DOC_LEN);
+  }
+});
+
+test('insertText: accepts offset 0', () => {
+  const result = validateMessage({ type: 'insertText', text: 'x', offset: 0 }, DOC_LEN);
+  assert.equal(result.valid, true);
+});
+
+test('insertText: accepts a surrogate pair (one astral character)', () => {
+  const result = validateMessage({ type: 'insertText', text: '\u{1F680}', offset: 1 }, DOC_LEN);
+  assert.equal(result.valid, true);
+});
+
+test('insertText: accepts newline and tab', () => {
+  assert.equal(validateMessage({ type: 'insertText', text: '\n', offset: 1 }, DOC_LEN).valid, true);
+  assert.equal(validateMessage({ type: 'insertText', text: '\t', offset: 1 }, DOC_LEN).valid, true);
+});
+
+test('insertText: rejects empty text', () => {
+  const result = validateMessage({ type: 'insertText', text: '', offset: 1 }, DOC_LEN);
+  assert.equal(result.valid, false);
+});
+
+test('insertText: rejects non-string text', () => {
+  assert.equal(validateMessage({ type: 'insertText', text: 5, offset: 1 }, DOC_LEN).valid, false);
+  assert.equal(validateMessage({ type: 'insertText', text: null, offset: 1 }, DOC_LEN).valid, false);
+  assert.equal(validateMessage({ type: 'insertText', offset: 1 }, DOC_LEN).valid, false);
+});
+
+test('insertText: rejects a carriage return (would desync the offset map)', () => {
+  const result = validateMessage({ type: 'insertText', text: '\r', offset: 1 }, DOC_LEN);
+  assert.equal(result.valid, false);
+});
+
+test('insertText: rejects C0 control characters and DEL', () => {
+  for (const ch of ['\u0000', '\u0007', '\u001B', '\u007F']) {
+    const result = validateMessage({ type: 'insertText', text: ch, offset: 1 }, DOC_LEN);
+    assert.equal(result.valid, false, `expected rejection for ${JSON.stringify(ch)}`);
+  }
+});
+
+test('insertText: refuses an oversized paste rather than truncating it', () => {
+  const huge = 'a'.repeat(10_001);
+  const result = validateMessage({ type: 'insertText', text: huge, offset: 1 }, DOC_LEN);
+  assert.equal(result.valid, false);
+});
+
+test('insertText: accepts text exactly at the length limit', () => {
+  const atLimit = 'a'.repeat(10_000);
+  const result = validateMessage({ type: 'insertText', text: atLimit, offset: 1 }, DOC_LEN);
+  assert.equal(result.valid, true);
+});
+
+test('insertText: rejects a negative offset', () => {
+  const result = validateMessage({ type: 'insertText', text: 'a', offset: -1 }, DOC_LEN);
+  assert.equal(result.valid, false);
+});
+
+test('insertText: rejects a non-integer offset', () => {
+  assert.equal(validateMessage({ type: 'insertText', text: 'a', offset: 1.5 }, DOC_LEN).valid, false);
+  assert.equal(validateMessage({ type: 'insertText', text: 'a', offset: '3' }, DOC_LEN).valid, false);
+  assert.equal(validateMessage({ type: 'insertText', text: 'a' }, DOC_LEN).valid, false);
+});

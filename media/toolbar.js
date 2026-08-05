@@ -480,4 +480,74 @@
       }
     });
   }
+
+  // ---------------------------------------------------------------
+  // M4.1 Typing in the card.
+  //
+  // Keystrokes land in a hidden input (#type-catcher) rather than a
+  // contenteditable body: the card's DOM is regenerated from offset spans on
+  // every render, and contenteditable would make the browser a second writer
+  // to that same DOM (PRD Q1).
+  //
+  // The caret offset is tracked here in the webview because the document
+  // round trip is far slower than typing. Each insert advances it locally and
+  // optimistically; without that, every keystroke in a fast burst would post
+  // the same offset and the text would arrive reversed.
+  // ---------------------------------------------------------------
+  var typeCatcher = document.getElementById('type-catcher');
+  var caretOffset = null;
+
+  // Precise offset of a collapsed caret: the span's start plus how far into
+  // that span's text node the caret sits. The span offset alone would snap
+  // every insert to a span boundary.
+  function collapsedCaretOffset() {
+    var sel = window.getSelection();
+    if (!sel || !sel.isCollapsed || sel.rangeCount === 0) { return null; }
+    var range = sel.getRangeAt(0);
+    if (!body || !body.contains(range.startContainer)) { return null; }
+    var span = closestOffsetSpan(range.startContainer);
+    if (!span) { return null; }
+    var base = parseInt(span.dataset.offset, 10);
+    if (isNaN(base)) { return null; }
+    return base + range.startOffset;
+  }
+
+  if (typeCatcher && body) {
+    // Only a collapsed click arms typing. A drag-selection must keep focus in
+    // the body, or the selection the toolbar acts on would be destroyed.
+    body.addEventListener('click', function () {
+      var offset = collapsedCaretOffset();
+      if (offset === null) {
+        // Not a caret click - a drag-selection, or a click outside any offset
+        // span. Disarm: keeping the previous offset armed would make the next
+        // keystroke land wherever the caret used to be. Focus stays in the
+        // body so the toolbar can still act on the selection.
+        caretOffset = null;
+        return;
+      }
+      caretOffset = offset;
+      typeCatcher.focus({ preventScroll: true });
+    });
+
+    // 'input' fires once per committed change, including at the end of an IME
+    // composition, so a composed character arrives whole rather than as its
+    // intermediate candidates.
+    typeCatcher.addEventListener('input', function () {
+      var text = typeCatcher.value;
+      typeCatcher.value = '';
+      if (!text) { return; }
+      if (caretOffset === null) { return; }
+      vscode.postMessage({
+        type: 'insertText',
+        text: text,
+        offset: caretOffset
+      });
+      caretOffset += text.length;
+    });
+
+    // No invalidation listener is needed. Re-render assigns webview.html
+    // wholesale, which tears down the document and re-runs this script, so
+    // caretOffset resets to null on its own. That same teardown is why
+    // typing currently survives exactly one character - see M4.2.
+  }
 })();
