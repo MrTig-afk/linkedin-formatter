@@ -106,6 +106,14 @@ export class PreviewPanel {
    */
   private _historyInFlight = false;
   /**
+   * Undo/redo requests queue here and drain in ONE focus round-trip.
+   * Each request used to do its own editor-focus -> undo -> reveal dance;
+   * a Ctrl+Z pressed mid-dance found focus in the workbench shell - not
+   * the card, not the editor - and did nothing, unrecoverably.
+   */
+  private _historyQueue: Array<'undo' | 'redo'> = [];
+  private _historyRunning = false;
+  /**
    * Edits from the card are SERIALIZED through this chain.
    *
    * Without it, a fast burst delivered keystroke N+1 while keystroke N's
@@ -349,6 +357,56 @@ export class PreviewPanel {
     }, null, this._disposables);
   }
 
+  /**
+   * Run every queued undo/redo in a single focus round-trip.
+   *
+   * 'undo' is focus-routed, so the tracked editor must hold focus while the
+   * commands run; the card gets focus back afterwards. The trace showed a
+   * single panel.reveal sometimes failing to land focus inside the webview
+   * iframe - the next Ctrl+Z then hit the workbench shell, where it is a
+   * no-op, and undo went permanently dead. The reveal is therefore asserted
+   * twice: once immediately, once after the focus transition has settled.
+   */
+  private async drainHistory(): Promise<void> {
+    if (this._historyRunning) { return; }
+    const editor = vscode.window.visibleTextEditors.find(
+      e => e.document.uri.toString() === this._trackedUri
+    );
+    if (!editor) { this._historyQueue.length = 0; return; }
+    this._historyRunning = true;
+    this._historyInFlight = true;
+    try {
+      await vscode.window.showTextDocument(editor.document, {
+        viewColumn: editor.viewColumn,
+        preserveFocus: false,
+      });
+      while (this._historyQueue.length > 0) {
+        const command = this._historyQueue.shift() as 'undo' | 'redo';
+        await vscode.commands.executeCommand(command);
+      }
+    } catch (err) {
+      console.error('[LinkedIn Preview] undo/redo failed:', err);
+      this._historyQueue.length = 0;
+    }
+    this._historyInFlight = false;
+    this._historyRunning = false;
+    const after = vscode.window.visibleTextEditors.find(
+      e => e.document.uri.toString() === this._trackedUri);
+    // The card caret was already moved to the undo site by the change
+    // event; the editor's cursor is NOT consulted here.
+    this._panel.reveal(undefined, false);   // focus returns to the card
+    setTimeout(() => {
+      try {
+        if (!this._historyRunning) {
+          this._panel.reveal(undefined, false);
+          this.log('post-undo reveal re-asserted');
+        }
+      } catch { /* panel disposed between undo and settle - nothing to focus */ }
+    }, 150);
+    // Push a fresh render so the webview re-arms from the echoed caret.
+    if (after) { this.update(after.document); }
+  }
+
   private handleValidMessage(message: WebviewMessage, doc: vscode.TextDocument): void {
     if (message.type === 'applyStyle') {
       this.applyEdit(doc, message.start, message.end, (text) =>
@@ -401,34 +459,8 @@ export class PreviewPanel {
     }
 
     if (message.type === 'undo' || message.type === 'redo') {
-      const command = message.type;
-      // Undo acts on the focused editor, so focus the tracked one first.
-      const editor = vscode.window.visibleTextEditors.find(
-        e => e.document.uri.toString() === this._trackedUri
-      );
-      if (!editor) { return; }
-      // Undo has to run against the focused editor, so focus is taken away
-      // from the card for the duration. Give it back afterwards and put the
-      // caret where the undo left the editor, otherwise the caret simply
-      // vanishes and the user has lost their place in the card.
-      this._historyInFlight = true;
-      void vscode.window.showTextDocument(editor.document, {
-        viewColumn: editor.viewColumn,
-        preserveFocus: false,
-      }).then(
-        () => vscode.commands.executeCommand(command),
-        (err) => console.error('[LinkedIn Preview] undo/redo failed:', err),
-      ).then(() => {
-        this._historyInFlight = false;
-        const after = vscode.window.visibleTextEditors.find(
-          e => e.document.uri.toString() === this._trackedUri);
-        // The card caret was already rebased from the change event itself;
-        // the editor's cursor is NOT consulted - it does not track the
-        // card and pointed somewhere unrelated in practice.
-        this._panel.reveal(undefined, false);   // focus returns to the card
-        // Push a fresh render so the webview re-arms from the echoed caret.
-        if (after) { this.update(after.document); }
-      }, () => { this._historyInFlight = false; });
+      this._historyQueue.push(message.type);
+      void this.drainHistory();
       return;
     }
 
