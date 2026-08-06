@@ -40,3 +40,7 @@ project_summary.txt
 # packaged into the vsix from disk for the marketplace version history; not tracked
 CHANGELOG.md
 HANDOFF.md
+
+# CLI build output (the published artifact is built, not tracked)
+cli/dist/
+mcp/dist/

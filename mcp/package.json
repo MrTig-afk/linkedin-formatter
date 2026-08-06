@@ -1,0 +1,34 @@
+{
+  "name": "linkedin-formatter-mcp",
+  "version": "0.1.0",
+  "description": "MCP server exposing LinkedIn Unicode formatting. Local, stdio only, no network.",
+  "license": "MIT",
+  "author": "Kaushik Narumanchi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MrTig-afk/linkedin-formatter.git",
+    "directory": "mcp"
+  },
+  "homepage": "https://github.com/MrTig-afk/linkedin-formatter",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "linkedin",
+    "unicode",
+    "formatting"
+  ],
+  "bin": {
+    "linkedin-formatter-mcp": "dist/linkedin-formatter-mcp.js"
+  },
+  "files": [
+    "dist/linkedin-formatter-mcp.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true,
+  "scripts": {
+    "prepublishOnly": "node ../mcp-build.js"
+  }
+}
