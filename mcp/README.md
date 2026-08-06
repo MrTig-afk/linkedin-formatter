@@ -34,8 +34,15 @@ Add it to your client's MCP configuration:
 }
 ```
 
-Claude Code takes this via `claude mcp add` or a project `.mcp.json`; Cursor
-uses `mcp.json`; Codex uses an `[mcp_servers]` block. Node 18 or newer.
+Per client (Node 18 or newer):
+
+- **Claude Code**: `claude mcp add -s user linkedin-formatter -- npx -y linkedin-formatter-mcp`
+- **Claude Desktop**: the JSON above in `claude_desktop_config.json`
+  (Settings → Developer → Edit Config)
+- **Cursor**: the JSON above in `~/.cursor/mcp.json`
+- **Windsurf**: the JSON above in `~/.codeium/windsurf/mcp_config.json`
+- **Codex**: an `[mcp_servers.linkedin-formatter]` block with
+  `command = "npx"` and `args = ["-y", "linkedin-formatter-mcp"]`
 
 Once registered, the tool descriptions reach the model automatically at session
 start, so it learns the `.linkedin` convention without being told.
@@ -79,6 +86,8 @@ family, asserted over the full `A-Za-z0-9` range.
 
 The companion
 [VS Code extension](https://marketplace.visualstudio.com/items?itemName=kaushiknaru.linkedin-formatter)
+(also on [Open VSX](https://open-vsx.org/extension/kaushiknaru/linkedin-formatter)
+for Cursor and Windsurf)
 renders any `.linkedin` file as a live LinkedIn card beside the editor, so a
 human can see and adjust what the model produced. Because the formatting *is*
 the text, both sides edit the same file with no sync step and no markup layer

@@ -57,13 +57,39 @@ The full user guide (styles table, shortcuts, settings) lives on the
 
 Search **LinkedIn Formatter** in the VS Code Extensions view, or grab it
 from the [marketplace](https://marketplace.visualstudio.com/items?itemName=kaushiknaru.linkedin-formatter).
+Cursor, Windsurf and other VS Code derivatives install it from
+[Open VSX](https://open-vsx.org/extension/kaushiknaru/linkedin-formatter).
 Then create any file ending in `.linkedin` and the preview opens by itself.
 
-## Roadmap
+## For AI agents: the MCP server and CLI
 
-- **A CLI and an MCP server.** The same conversion core exposed to scripts
-  and AI agents directly, so an agent connected over MCP can style a post
-  and open the preview without ever being taught the file convention.
+The same conversion core ships as an
+[MCP server](https://www.npmjs.com/package/linkedin-formatter-mcp) and a
+[CLI](https://www.npmjs.com/package/linkedin-fmt), so an agent can style a
+post and open the preview without ever being taught the file convention.
+
+Register the server once in any MCP client (Claude Code, Claude Desktop,
+Cursor, Windsurf, Codex):
+
+```json
+{
+  "mcpServers": {
+    "linkedin-formatter": {
+      "command": "npx",
+      "args": ["-y", "linkedin-formatter-mcp"]
+    }
+  }
+}
+```
+
+For shells and scripts:
+
+```bash
+npx -y linkedin-fmt style "launch day" -f sans-serif -b
+```
+
+Both are single-file bundles with zero dependencies and zero network
+access. [mcp/README.md](mcp/README.md) has the per-client setup details.
 
 ## Under the hood
 
@@ -72,7 +98,7 @@ imports: style tables transcribed from the Unicode charts with their
 exception tables, an 11-family bold/italic matrix, lossless round-trip
 conversion, and fail-closed mapping (a character with no Unicode equivalent
 stays unchanged, never a lookalike). It runs headless, which is why the
-589-test suite finishes in under a second.
+638-test suite finishes in under a second.
 
 The preview is a hardened webview: strict CSP, per-render nonce, every
 message validated at the trust boundary, CSS and JS inlined so a render can

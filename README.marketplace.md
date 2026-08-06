@@ -18,6 +18,12 @@ same `.linkedin` file with no sync step and no markup layer to reconcile. Ask
 your assistant for a post and have it saved with that extension, and the
 preview picks it up automatically.
 
+To teach your assistant the convention once, machine-wide, register the
+companion [MCP server](https://www.npmjs.com/package/linkedin-formatter-mcp):
+`npx -y linkedin-formatter-mcp`. Its tools apply the styling with exact code
+points, count characters the way LinkedIn does, and tell the agent to save
+drafts as `.linkedin` files so this preview opens on its own.
+
 ## Quick start
 
 1. Install the extension.
