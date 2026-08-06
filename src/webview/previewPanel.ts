@@ -19,11 +19,23 @@ export class PreviewPanel {
   private static currentPanel: PreviewPanel | undefined;
 
   /**
-   * Set when the user closes the panel; auto-open respects it for the rest
-   * of the session so a deliberately closed preview does not keep coming
-   * back. An explicit LinkedIn: Open Preview clears it.
+   * Documents whose preview the user closed; auto-open respects each for
+   * the rest of the session so a deliberately closed preview does not keep
+   * coming back FOR THAT FILE. Per-document, not per-session: viewing a
+   * different .linkedin file still auto-opens, which is what makes the
+   * agent workflow (open a fresh draft, preview appears) reliable even
+   * after the user closed an earlier file's card. An explicit
+   * LinkedIn: Open Preview clears the whole set.
    */
-  public static suppressedThisSession = false;
+  private static readonly suppressedUris = new Set<string>();
+
+  public static isSuppressedFor(uri: string): boolean {
+    return PreviewPanel.suppressedUris.has(uri);
+  }
+
+  public static clearSuppression(): void {
+    PreviewPanel.suppressedUris.clear();
+  }
 
   public static get current(): PreviewPanel | undefined {
     return PreviewPanel.currentPanel;
@@ -160,10 +172,23 @@ export class PreviewPanel {
     editor: vscode.TextEditor
   ): void {
     if (PreviewPanel.currentPanel) {
+      const panel = PreviewPanel.currentPanel;
       // Reveal in place; passing a column here could drag the panel around.
-      PreviewPanel.currentPanel._panel.reveal(undefined, true);
-      PreviewPanel.currentPanel._trackedUri = editor.document.uri.toString();
-      PreviewPanel.currentPanel.update(editor.document);
+      panel._panel.reveal(undefined, true);
+      const uri = editor.document.uri.toString();
+      if (panel._trackedUri !== uri) {
+        // Retarget (v3.1: the panel follows the active .linkedin tab).
+        // Selection and caret are offsets into the OLD document; carrying
+        // them across files would highlight arbitrary text in the new one.
+        panel._trackedUri = uri;
+        panel._restoreSelection = null;
+        panel._cardCaret = null;
+        // Force a full page rebuild: the fast render path reuses the page,
+        // whose data-doc-uri (the webview's restore state) would otherwise
+        // keep naming the previous file.
+        panel._hasRendered = false;
+      }
+      panel.update(editor.document);
       return;
     }
 
@@ -920,7 +945,7 @@ export class PreviewPanel {
   }
 
   public dispose(): void {
-    PreviewPanel.suppressedThisSession = true;
+    PreviewPanel.suppressedUris.add(this._trackedUri);
     PreviewPanel.currentPanel = undefined;
     this._panel.dispose();
     for (const d of this._disposables) {

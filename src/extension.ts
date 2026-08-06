@@ -72,8 +72,19 @@ async function purgeEmptyEditorGroups(): Promise<void> {
 }
 
 /**
- * Auto-open the preview beside a .linkedin editor (S5.3, v1.2). Respects
- * linkedinFormatter.autoOpenPreview and a user close earlier in the session.
+ * The preview follows the ACTIVE .linkedin editor (S5.2, v3.1). Three cases:
+ *
+ *   panel open, different .linkedin tab activated -> retarget the panel
+ *   no panel, a .linkedin tab activated           -> auto-open, unless the
+ *                                                    user closed the preview
+ *                                                    for THIS file already
+ *   active editor is not a .linkedin file         -> leave the panel alone;
+ *                                                    focusing the terminal or
+ *                                                    a README must not tear
+ *                                                    the card down
+ *
+ * Respects linkedinFormatter.autoOpenPreview for the auto-open case only;
+ * retargeting an already-open panel is not an "open" and always follows.
  */
 async function maybeAutoOpenPreview(context: vscode.ExtensionContext): Promise<void> {
   await purgeEmptyEditorGroups();
@@ -85,10 +96,19 @@ async function maybeAutoOpenPreview(context: vscode.ExtensionContext): Promise<v
       (e) => e.document.languageId === 'linkedin'
     );
   if (!editor) { return; }
+
+  const current = PreviewPanel.current;
+  if (current) {
+    if (current.trackedUri !== editor.document.uri.toString()) {
+      PreviewPanel.createOrShow(context, editor); // existing-panel path retargets
+    }
+    return;
+  }
+
   const auto = vscode.workspace.getConfiguration('linkedinFormatter')
     .get<boolean>('autoOpenPreview', true);
   if (!auto) { return; }
-  if (PreviewPanel.current || PreviewPanel.suppressedThisSession) { return; }
+  if (PreviewPanel.isSuppressedFor(editor.document.uri.toString())) { return; }
   PreviewPanel.createOrShow(context, editor);
 }
 

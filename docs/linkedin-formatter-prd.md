@@ -89,6 +89,16 @@ change, including edits made by an external process.
 
 Card width is fixed at 555px to match LinkedIn's feed column.
 
+**The preview follows the active `.linkedin` tab (v3.1).** With several
+`.linkedin` files open, the single panel retargets to whichever one is the
+active editor; selection and caret state never carry across files, and a
+retarget rebuilds the page so the webview's restore state names the right
+file. Closing the panel suppresses auto-open for THAT FILE only, for the
+rest of the session - viewing a different `.linkedin` file still auto-opens,
+which is what keeps the agent workflow (S7.5.3) reliable after a user has
+closed an earlier file's card. An explicit `LinkedIn: Open Preview` clears
+all suppression. Focusing a non-`.linkedin` editor leaves the panel alone.
+
 ### S5.3 Styling from the preview
 
 Selecting text in the rendered card and using the toolbar applies real Unicode

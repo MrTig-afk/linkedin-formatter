@@ -7,7 +7,7 @@ export function openPreview(context: vscode.ExtensionContext): void {
     vscode.window.showInformationMessage('Open a file first to preview it.');
     return;
   }
-  // An explicit open overrides an earlier user close of the panel.
-  PreviewPanel.suppressedThisSession = false;
+  // An explicit open overrides every earlier user close of the panel.
+  PreviewPanel.clearSuppression();
   PreviewPanel.createOrShow(context, editor);
 }
