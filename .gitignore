@@ -39,3 +39,4 @@ project_summary.txt
 
 # packaged into the vsix from disk for the marketplace version history; not tracked
 CHANGELOG.md
+HANDOFF.md
