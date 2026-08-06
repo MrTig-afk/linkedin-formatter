@@ -27,7 +27,6 @@
   "engines": {
     "node": ">=18"
   },
-  "private": true,
   "scripts": {
     "prepublishOnly": "node ../mcp-build.js"
   }
