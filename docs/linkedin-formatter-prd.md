@@ -1,8 +1,11 @@
 # LinkedIn Formatter - Product Requirements
 
-Version 2.0 of this document. Sections S1-S12 and appendices A/E describe v1,
+Version 3.0 of this document. Sections S1-S12 and appendices A/E describe v1,
 which has shipped (marketplace v1.0.2). Section S7.4 and milestone M4 describe
-v2 (two-way preview editing), which has not been built.
+v2 (two-way preview editing), shipped as marketplace v1.1.0 on 2026-08-06.
+Section S7.5 and milestone M5 describe v3, the agent surface (CLI and MCP
+server): built on branch `feat/cli` (GitHub issue #3), not yet rebased, merged
+or published.
 
 **Provenance.** The original PRD file was lost. S1-S12 and the appendices were
 reconstructed on 2026-08-05 from `.claude/project-profile.md` (generated from
@@ -47,6 +50,7 @@ These are deliberately excluded. They are not backlog items unless promoted by
 a later PRD revision.
 
 - No AI, LLM or API calls in the product. Conversion is deterministic mapping.
+  (The v3 MCP server is called BY a model; it never calls one.)
 - No superscript or subscript. Unicode lacks code points for several letters,
   so coverage would be partial and the failure mode confusing.
 - No JetBrains, Sublime or browser version.
@@ -62,7 +66,10 @@ a later PRD revision.
 - **The developer who posts.** Writes in an editor, often with an AI CLI in the
   same window. Wants the post to look right without leaving the editor.
 - **The AI agent.** Reads and writes the same file. Needs the styling to be in
-  the text itself, because it has no access to a UI layer.
+  the text itself, because it has no access to a UI layer. As of v3 it styles
+  text through MCP tool calls instead of emitting code points from memory, and
+  hands the result to the human by saving a `.linkedin` file and opening it in
+  VS Code, where the extension's preview appears automatically (S7.5.3).
 
 ## S5. Functional requirements
 
@@ -177,7 +184,9 @@ Two consequences follow, and both are requirements:
    can gate an unattended pipeline run. Extension-host tests need a real VS Code
    window and cannot.
 2. The core can be lifted into another host without modification. This is what
-   makes S7.3 (MCP server and CLI) an integration task rather than a rewrite.
+   made the v3 agent surface (S7.5) an integration task rather than a rewrite.
+   Three hosts now sit over the one core: the extension, the CLI (`src/cli/`)
+   and the MCP server (`src/mcp/`), with no duplicated conversion logic.
 
 **The webview is a hardened boundary.** Strict CSP, a per-render nonce,
 stylesheet and script inlined into every render rather than fetched from
@@ -192,10 +201,11 @@ unstyled.
 Everything in S5. Ships as a `.vsix` on the VS Code Marketplace under publisher
 `kaushiknaru`. Released as 1.0.0 (2026-08-04), 1.0.1 and 1.0.2 (2026-08-05).
 
-### S7.2 MCP server and CLI - CONSIDERED AND REJECTED (2026-08-05)
+### S7.2 MCP server and CLI - REJECTED (2026-08-05), REVERSED (2026-08-06)
 
-An MCP server and a CLI over the conversion core were scoped as v2 and then
-rejected. Recorded here so the decision is not silently revisited.
+An MCP server and a CLI over the conversion core were scoped as v2, rejected,
+and then reinstated as v3 by owner decision after v2 shipped. Both the
+rejection and the reversal are recorded so neither is silently revisited.
 
 **What they would have solved.** Language models cannot reliably emit these
 code points. Script capital B is U+212C, in Letterlike Symbols, not one past
@@ -220,11 +230,26 @@ UTF-16 counting rule (S5.6), which no model knows.
 it. The CLI needs no SDK, no transport, and no per-client configuration
 documentation. Do not build the MCP server alone.
 
+**Why reversed (2026-08-06).** The owner reopened the decision after v2
+shipped, and each rejection reason has an answer now:
+
+1. Two-way editing (S7.4) shipped as 1.1.0, so this work no longer displaces
+   the feature that completed the product.
+2. The automatic-preview workflow (S7.5.3) resolves the "weakens the premise"
+   objection: the agent styles text, but the result lands in the extension's
+   preview card where the human reviews and adjusts by hand. Style authority
+   stays with the human; what the agent stops doing is guessing code points.
+3. It was built exactly as this section prescribed: CLI first, MCP server as a
+   thin wrapper over the same core. The SDK dependency is confined to the
+   `mcp` package; the extension still has zero runtime dependencies.
+
+Scope lives in S7.5.
+
 ### S7.3 Still deferred
 
-- Nothing further. S7.4 was the only remaining deferred item and is now v2.
+- Nothing further. S7.4 shipped as v2; the agent surface is v3 (S7.5).
 
-### S7.4 v2 - two-way preview editing (NOT BUILT)
+### S7.4 v2 - two-way preview editing (SHIPPED as 1.1.0, 2026-08-06)
 
 **Problem.** The preview is currently a one-way render plus a styling surface.
 Prose must be typed in the left editor. A user who wants to add a sentence
@@ -260,6 +285,177 @@ from the clipboard source) is out; paste is plain.
 - The webview message contract still validates and clamps every offset (S9).
   Typing produces far more messages than styling did; the boundary does not
   get looser because it is busier.
+
+### S7.5 v3 - agent surface: CLI and MCP server (BUILT on `feat/cli`, UNMERGED)
+
+**Problem.** Language models cannot reliably emit these code points (script
+capital B is U+212C in Letterlike Symbols, not one past script A, because the
+Mathematical Alphanumeric block has holes - appendix A.2), and no model knows
+the UTF-16 counting rule (S5.6). An agent asked to style a post from memory
+gets it subtly wrong, and the failure renders as an empty box on someone's
+phone.
+
+**Goal.** An agent styles a post by calling deterministic tools instead of
+guessing, and the human reviews the result in the extension's preview card,
+which opens automatically. One prompt takes a draft from plain prose to a
+rendered LinkedIn card beside the editor.
+
+State of the work: built on branch `feat/cli` (issue #3), spec-reviewed, 579
+tests green on that branch. The branch predates the entire v2 line of work on
+`main`; M5.1 (rebase, rerun green) is a hard precondition for everything else.
+
+#### S7.5.1 CLI - `linkedin-fmt`
+
+A single-file, zero-dependency Node CLI (Node >= 18) over the conversion core.
+Text comes from the argument or from stdin, so files work by redirection and
+commands compose in pipes.
+
+| Command | What it does |
+|---|---|
+| `style <text>` | Apply a font family, optionally bold and/or italic |
+| `mark <text>` | Layer a combining mark (strikethrough, underline) |
+| `strip <text>` | Convert styled text back to plain ASCII |
+| `count <text>` | Count against LinkedIn's 3,000 limit |
+| `families` | List the 11 families and the axes each supports |
+| `styles` | List every letterform style and combining mark id |
+
+Flags: `-f/--family <id>` (default `serif`), `-b/--bold`, `-i/--italic`,
+`-m/--mark <id>`, `-u/--unit utf16|codepoints` (default `utf16`). Family ids,
+style ids and mark ids are exactly the enumerations in appendices A and E -
+the CLI invents no new vocabulary.
+
+#### S7.5.2 MCP server - `linkedin-formatter-mcp`
+
+A stdio MCP server over the same core, built on the official
+`@modelcontextprotocol/sdk`. Seven tools:
+
+| Tool | Purpose |
+|---|---|
+| `apply_family` | Style text as a family with optional bold/italic. The main one. |
+| `apply_style` | Style text by exact style id |
+| `apply_mark` | Layer strikethrough or underline |
+| `strip_formatting` | Styled text back to plain ASCII |
+| `count_characters` | Count against the 3,000 limit in UTF-16 units |
+| `list_families` | The 11 families and their axes |
+| `list_styles` | Every letterform style and combining mark id |
+
+The following are requirements, not implementation notes. They follow the MCP
+specification and Anthropic's published server conventions, and the tests
+assert them:
+
+- **Transport is stdio only.** No HTTP, no listening socket, even on
+  localhost (S9). stdout carries nothing but JSON-RPC; diagnostics go to
+  stderr, because anything non-protocol on stdout corrupts the stream.
+- **Tool names are snake_case verb phrases** and stable across releases.
+- **Tool descriptions are the discovery surface.** They are injected into the
+  model's context at session start and are the only way an assistant learns
+  the `.linkedin` convention, so each one says WHEN to call the tool, not just
+  what it does. A vague description makes the tool effectively undiscoverable.
+- **Annotations are accurate and complete** on every tool: `readOnlyHint:
+  true`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint:
+  false`. All seven tools are pure functions over strings, and the hints say
+  so, so clients never prompt a user to confirm a call that cannot alter
+  anything. An inaccurate hint is a bug of the same severity as a wrong code
+  point.
+- **The tool list is static** and declared in a fixed order, and
+  `capabilities.tools.listChanged` is `false` - the server never emits a
+  list-changed notification, and declaring otherwise would be a promise it
+  does not keep. Fixed order keeps client-side prompt caching intact.
+- **The `instructions` field carries the workflow** (S7.5.3). It is the
+  second, tool-independent route by which the convention reaches the model.
+- **The `instructions` field also carries styling judgment.** The realistic
+  prompt is "write me a post, make it look good", not a styling spec, and a
+  third-party agent has only these instructions to go on. One or two
+  sentences of taste: style for emphasis, not decoration - bold the hook and
+  the few load-bearing phrases, keep body text plain, one family per post,
+  and never style an entire paragraph. Enough that an unprompted agent
+  produces something a human would post, not a ransom note.
+- **Families carry roles, not just axes.** `list_families` and the guidance
+  give each family a one-line WHEN: serif bold/italic for emphasis in body
+  text (the default workhorse), sans-serif bold for the hook and headers,
+  monospace for versions, commands and code, script as a sparing flourish or
+  sign-off. The remaining families (fraktur, double-struck, circled, squared,
+  negative-squared, fullwidth, parenthesized) are marked as human-choice
+  novelties an agent uses only on explicit request. They stay in the tool
+  surface regardless: `strip_formatting` must reverse anything a person
+  pastes in, and the extension dropdown offers all 11 to the human.
+- **Error semantics follow the spec's split.** An unknown tool name is a
+  protocol error (`McpError`, `InvalidParams`) because the model cannot fix it
+  by retrying with different arguments. Bad arguments to a known tool return
+  `isError: true` in a normal result with a readable message, so the model
+  reads it and corrects itself. The server never crashes on bad input.
+- **The first content block is pure data** a model can pipe onward.
+  Commentary (dropped axes, warnings) rides in a separate `note:` block.
+- **Results are honest.** Unicode is sparse: monospace has no bold, script no
+  italic. A requested-but-unavailable axis is dropped AND stated in the
+  response, so the model never reports bold text that is not bold.
+
+#### S7.5.3 Automatic preview - the workflow contract
+
+This is the piece that connects the agent surface back to the product. The
+server's `instructions` direct any connected agent, when composing a whole
+post, to:
+
+1. Draft the prose, then OFFER THREE STYLING TIERS before applying anything:
+   **minimal** (plain text, bold hook only), **balanced** (bold hook,
+   sans-serif-bold headers, sparing serif-bold emphasis - the default), and
+   **pizzazz** (a deliberate mixture: script flourish, monospace details,
+   marks). Present them through the client's native option picker where one
+   exists, else as a plain numbered list in chat. The tier is a starting
+   point, not a commitment - the human restyles by hand in the card either
+   way. The real purpose is discovery: every user learns the font options
+   exist, even the one who always picks minimal.
+2. Apply the chosen tier with the tools and check `count_characters`.
+3. Save the result to a file ending `.linkedin`.
+4. Open that file in VS Code (for example `code draft.linkedin`). The
+   extension activates on the language id and, with `autoOpenPreview`
+   defaulting to true (S8.4), the LinkedIn card renders beside the editor
+   with no further action. The agent gives the user the preview, not just
+   raw styled text.
+5. If the preview does not appear, the extension is not installed. The agent
+   OFFERS `code --install-extension kaushiknaru.linkedin-formatter` and lets
+   the human decide. An agent never installs anything without asking.
+
+Two boundaries keep this clean:
+
+- The workflow is carried as instructions the AGENT executes with its own
+  tools. The MCP server itself never opens a file, spawns a process or touches
+  the filesystem; it stays a pure text transformer (S9).
+- The `.linkedin` file is shared ground. Instructions tell agents to re-read
+  the file before writing, because the human may have edited it in the card
+  since the agent last looked.
+
+#### S7.5.4 Packaging
+
+- Two npm packages, each a single bundled file plus README: `cli/` publishing
+  `linkedin-fmt`, `mcp/` publishing `linkedin-formatter-mcp`, both currently
+  `private: true` (Q7). Built by `cli-build.js` / `mcp-build.js`; Node >= 18;
+  MIT.
+- `@modelcontextprotocol/sdk` is the project's first runtime dependency and is
+  confined to the MCP bundle. The extension's manifest is untouched and keeps
+  zero runtime dependencies.
+- Neither package ships inside the `.vsix`. This leak actually happened and
+  was caught by the pre-publish security review at 1.1.0; `vsce ls` before
+  every package remains mandatory (S9).
+
+#### v3 acceptance
+
+- All seven tools respond over stdio to a real MCP client
+  (`mcp/e2e-check.js` passes).
+- Round trip through the server is lossless: `apply_family` then
+  `strip_formatting` returns the input, for the complete `A-Za-z0-9` string,
+  for every family.
+- An unavailable axis is dropped and reported in the response text.
+- `count_characters` agrees with the S5.6 UTF-16 rule.
+- **The one-prompt demo runs.** From a single user prompt, an agent registered
+  with the server produces a styled `.linkedin` file and the preview opens in
+  VS Code. Run by the owner and observed, not just claimed. This has never
+  been run and is the acceptance risk (M5.2).
+- The tools are covered headless without starting a server
+  (`test/unit/mcp.test.ts`, `test/unit/cli.test.ts`), and the unit suite
+  stays in plain Node at roughly a second.
+- The server opens no socket, reads no file, writes no file, spawns no
+  process.
 
 ## S8. Data model
 
@@ -334,6 +530,16 @@ Never substitute a visually similar guess.
 **Cost surfaces: none.** There are no paid calls anywhere in this project. A
 task that appears to introduce one is a non-goal violation.
 
+**v3 surfaces (S7.5) inherit the egress rule.** The CLI reads argv/stdin and
+writes stdout. The MCP server speaks JSON-RPC over stdio and nothing else: no
+listening socket (HTTP was deliberately not implemented - even localhost would
+need its own threat model), no telemetry, no filesystem access, including the
+`.linkedin` files its instructions mention. Opening the preview is the agent's
+action, never the server's. Untrusted input enters as tool arguments: validate
+shape, return bad arguments as `isError: true` results rather than crashing,
+and never pass them to a shell. `@modelcontextprotocol/sdk` is the only
+runtime dependency and lives only in the MCP bundle.
+
 **Packaging.** `.gitignore` and `.vscodeignore` are separate lists and must
 both be checked. A file excluded from git can still ship inside the `.vsix`.
 Run `vsce ls` before publishing and read the output.
@@ -356,16 +562,20 @@ nothing else matters.
   right pane.
 - **Fail closed.** Unmappable characters pass through unchanged.
 - **The core suite runs headless** in plain Node in under a second.
+- **The agent surface is honest (v3).** A tool call requesting an unavailable
+  axis drops it and says so in the response.
+- **One prompt to preview (v3).** A single agent prompt yields a styled
+  `.linkedin` file whose card renders in VS Code (S7.5.3).
 
 ## S12. Milestones
 
-M0-M3 shipped as v1.
+M0-M3 shipped as v1. M4 shipped as v2 (1.1.0, 2026-08-06).
 
 - **M0.** Conversion core: style tables, exception tables, round-trip suite.
 - **M1.** Preview render: language contribution, hardened webview, card layout.
 - **M2.** Style application: message contract, toolbar, mark layering, cursor sync.
 - **M3.** Counter, truncation markers, emoji picker.
-- **M4 (v2, not built).** Two-way preview editing (S7.4).
+- **M4 (v2, shipped 1.1.0).** Two-way preview editing (S7.4).
 
   Sequenced to de-risk the caret, which is the hard part. In order:
 
@@ -387,6 +597,22 @@ M0-M3 shipped as v1.
   M4.2 is the risk. If caret stability cannot be made reliable, the honest
   outcome is to stop and keep the preview one-way, rather than ship an editing
   surface that fights the user.
+
+- **M5 (v3, built on `feat/cli`, unmerged).** Agent surface: CLI and MCP
+  server (S7.5). The code exists; the milestone is integration, proof and
+  publish, sequenced so the never-run end-to-end check comes before any
+  irreversible step.
+
+  - **M5.1 - rebase and green.** Rebase `feat/cli` onto `main`, which moved
+    through the entire 1.1.0 release since the branch was cut. Rerun the full
+    suite on the rebased branch. Nothing else happens before this passes.
+  - **M5.2 - one-prompt demo.** Register the server with a real client, ask
+    an agent for a styled post, watch the `.linkedin` file appear and the
+    preview open. This is the acceptance risk: it has never been run.
+  - **M5.3 - merge.** Security review (the pre-publish gate has caught a
+    packaging leak both times it ran), then `--no-ff` into `main`.
+  - **M5.4 - publish.** Resolve Q7 and Q8, flip `private`, npm publish both
+    packages, Open VSX for the extension if Q8 says yes. Close issue #3.
 
 ## S13. Open questions
 
@@ -418,12 +644,22 @@ Recommendation: inherit the toolbar's active family and axes. Typing inside a
 bold run and getting plain text would be surprising. This does mean the active
 family becomes load-bearing state rather than a convenience.
 
-**Q5. Should `docs/` remain gitignored?**
-The PRD is meant to be the committed source of truth, but this repo's
-`.gitignore` excludes `docs/`, so this file will not reach GitHub or a cloud
-session. Recommendation: un-ignore `docs/` and commit the PRD. It is a product
-spec for an MIT-licensed extension and contains nothing sensitive; keeping it
-out of the repo mainly costs contributors and future sessions. Owner decision.
+**Q5. Should `docs/` remain gitignored? RESOLVED.**
+Resolved as recommended: `docs/linkedin-formatter-prd.md` is tracked on `main`.
+
+**Q7. npm package names and publish timing.**
+Both packages are `private: true` under the names `linkedin-fmt` and
+`linkedin-formatter-mcp`. Recommendation: keep both names (confirm
+availability on the registry at publish time, since it cannot be verified from
+here), and publish the two together in the same session right after M5.2 and
+the security review pass - each README references the other, so a solo publish
+ships dangling links. Owner decision.
+
+**Q8. Publish the extension to Open VSX?**
+The extension is Marketplace-only today, but Cursor and Windsurf users - the
+likeliest audience for an MCP-driven workflow - install extensions from Open
+VSX, so for them S7.5.3 step 4 currently dead-ends. Recommendation: yes,
+publish to Open VSX as part of M5.4. Owner decision.
 
 **Q6. IME and composed input.**
 Dead keys, IME candidate windows, and emoji pickers all produce composition
