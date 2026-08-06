@@ -54,15 +54,46 @@ export const SERVER_INSTRUCTIONS =
   + 'literal asterisks. Use apply_family to style text, and count_characters '
   + 'before posting, because LinkedIn counts UTF-16 code units and a styled '
   + 'character costs two. '
-  + 'FULL WORKFLOW when composing a whole post: style the text with these '
-  + 'tools, save it to a file ending .linkedin, then open that file in VS '
-  + 'Code (for example: code draft.linkedin). The LinkedIn Formatter '
-  + 'extension renders it as a live LinkedIn card beside the editor, where '
-  + 'the user reviews and adjusts by hand before posting. Give the user the '
-  + 'preview, not just the raw styled text. If the preview does not appear, '
-  + 'the extension is not installed; OFFER the user the command '
+  + 'STYLING JUDGMENT: style for emphasis, not decoration. Bold the hook and '
+  + 'the few load-bearing phrases, keep body text plain, and never style an '
+  + 'entire paragraph. '
+  + 'FAMILY ROLES: serif bold/italic for emphasis in body text (the default '
+  + 'workhorse); sans-serif bold for the hook and headers; monospace for '
+  + 'versions, commands and code; script as a sparing flourish or sign-off. '
+  + 'Every other family (fraktur, double-struck, circled, squared, '
+  + 'negative-squared, fullwidth, parenthesized) is a novelty: use it only '
+  + 'when the user explicitly asks for it. '
+  + 'FULL WORKFLOW when composing a whole post: 1) draft the prose, then '
+  + 'OFFER the user three styling tiers before applying anything - minimal '
+  + '(plain text, bold hook only), balanced (bold hook, sans-serif-bold '
+  + 'headers, sparing serif-bold emphasis; the sensible default), and '
+  + 'pizzazz (a deliberate mixture: script flourish, monospace details, '
+  + 'marks). Present the tiers with your client\'s option picker if it has '
+  + 'one, else as a numbered list; whichever the user picks, they can still '
+  + 'restyle by hand in the preview afterwards. 2) apply the chosen tier '
+  + 'with these tools and check count_characters. 3) save the result to a '
+  + 'file ending .linkedin. 4) open that file in VS Code (for example: '
+  + 'code draft.linkedin). The LinkedIn Formatter extension renders it as a '
+  + 'live LinkedIn card beside the editor, where the user reviews and '
+  + 'adjusts by hand before posting. Give the user the preview, not just '
+  + 'the raw styled text. 5) If the preview does not appear, the extension '
+  + 'is not installed; OFFER the user the command '
   + 'code --install-extension kaushiknaru.linkedin-formatter and let them '
   + 'decide - never install anything without asking.';
+
+/**
+ * One-line role per family, injected into list_families output and mirrored
+ * in SERVER_INSTRUCTIONS. The realistic prompt is "make it look good", not a
+ * styling spec (PRD S7.5.2): without roles an agent either never leaves serif
+ * or decorates with novelty fonts. Families absent here are novelties.
+ */
+const FAMILY_ROLES: ReadonlyMap<string, string> = new Map([
+  ['serif', 'body emphasis via bold/italic - the default workhorse'],
+  ['sans-serif', 'the hook and headers, usually bold'],
+  ['monospace', 'versions, commands and code'],
+  ['script', 'a sparing flourish or sign-off'],
+]);
+const NOVELTY_ROLE = 'novelty - only on explicit user request';
 
 const CONVENTION =
   'LinkedIn posts belong in a file ending .linkedin, written as plain text '
@@ -156,8 +187,9 @@ const TOOL_DEFS: readonly Omit<ToolDef, 'annotations'>[] = [
   {
     name: 'list_families',
     description:
-      'List the font families available for apply_family, and which of bold '
-      + 'and italic each one supports in Unicode.',
+      'List the font families available for apply_family: which of bold and '
+      + 'italic each one supports in Unicode, and the role each plays in a '
+      + 'well-styled post.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -223,7 +255,8 @@ export function callTool(name: string, rawArgs: unknown): ToolResult {
         slots.bold !== null ? 'bold' : null,
         slots.italic !== null ? 'italic' : null,
       ].filter(Boolean).join(', ') || 'none';
-      return `${id} (${FAMILY_LABELS.get(id) ?? id}) - axes: ${axes}`;
+      const role = FAMILY_ROLES.get(id) ?? NOVELTY_ROLE;
+      return `${id} (${FAMILY_LABELS.get(id) ?? id}) - axes: ${axes} - role: ${role}`;
     }).join('\n'));
   }
 

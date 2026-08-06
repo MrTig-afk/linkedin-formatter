@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { TOOLS, callTool } from '../../src/mcp/tools';
+import { TOOLS, callTool, SERVER_INSTRUCTIONS } from '../../src/mcp/tools';
 import { applyStyle, ALL_STYLES } from '../../src/lib/convert';
 import { FAMILY_IDS } from '../../src/lib/family';
 
@@ -96,6 +96,36 @@ test('mcp: list_families names all 11 and their axes', () => {
   const r = callTool('list_families', {});
   for (const id of FAMILY_IDS) { assert.ok(r.text.includes(id), `missing ${id}`); }
   assert.ok(r.text.includes('axes: none'));
+});
+
+test('mcp: list_families gives every family a role, novelties on request only', () => {
+  const r = callTool('list_families', {});
+  for (const line of r.text.split('\n')) {
+    assert.match(line, / - role: /, `no role on: ${line}`);
+  }
+  assert.match(r.text, /serif \(.*workhorse/);
+  assert.match(r.text, /monospace \(.*versions, commands and code/);
+  // The seven novelty families all carry the explicit-request marker.
+  const noveltyCount = r.text.split('\n')
+    .filter(l => l.includes('only on explicit user request')).length;
+  assert.equal(noveltyCount, 7);
+});
+
+test('mcp: server instructions carry judgment, roles and the three-tier offer', () => {
+  // Taste: emphasis, not decoration.
+  assert.match(SERVER_INSTRUCTIONS, /emphasis, not decoration/);
+  assert.match(SERVER_INSTRUCTIONS, /never style an entire paragraph/);
+  // Roles for the load-bearing families, novelty rule for the rest.
+  assert.match(SERVER_INSTRUCTIONS, /FAMILY ROLES/);
+  assert.match(SERVER_INSTRUCTIONS, /only\s+when the user explicitly asks/);
+  // The tier offer, in order, before any styling is applied.
+  assert.match(SERVER_INSTRUCTIONS, /OFFER the user three styling tiers/);
+  for (const tier of ['minimal', 'balanced', 'pizzazz']) {
+    assert.ok(SERVER_INSTRUCTIONS.includes(tier), `missing tier ${tier}`);
+  }
+  // The workflow still ends at the preview with an ask-first install.
+  assert.match(SERVER_INSTRUCTIONS, /\.linkedin/);
+  assert.match(SERVER_INSTRUCTIONS, /never install anything without asking/);
 });
 
 test('mcp: list_styles covers 18 letterform styles and 2 marks', () => {
