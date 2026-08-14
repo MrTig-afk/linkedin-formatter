@@ -8,6 +8,11 @@ const path = require('node:path');
 
 const outfile = path.join(__dirname, 'mcp/dist/linkedin-formatter-mcp.js');
 
+// The version the server reports at initialize comes from mcp/package.json,
+// never a second literal. A client can only tell which instructions it loaded
+// by that number, so a hand-maintained copy that drifts is worse than none.
+const { version } = require(path.join(__dirname, 'mcp/package.json'));
+
 esbuild.build({
   entryPoints: [path.join(__dirname, 'src/mcp/index.ts')],
   bundle: true,
@@ -17,6 +22,7 @@ esbuild.build({
   outfile,
   banner: { js: '#!/usr/bin/env node' },
   legalComments: 'none',
+  define: { __MCP_VERSION__: JSON.stringify(version) },
 }).then(() => {
   const { statSync } = require('node:fs');
   console.log('mcp/dist/linkedin-formatter-mcp.js',

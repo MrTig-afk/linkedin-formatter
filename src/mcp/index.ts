@@ -20,7 +20,11 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { TOOLS, TOOL_NAMES, SERVER_INSTRUCTIONS, callTool } from './tools';
 
-const VERSION = '0.1.0';
+// Substituted by mcp-build.js from mcp/package.json. Declared, not hardcoded:
+// the published version and the version reported at initialize must be the
+// same number, and a second literal here is a copy that silently rots.
+declare const __MCP_VERSION__: string;
+const VERSION = __MCP_VERSION__;
 
 const server = new Server(
   { name: 'linkedin-formatter', version: VERSION },
