@@ -402,9 +402,12 @@ assert them:
 
 #### S7.5.3 Automatic preview - the workflow contract
 
-This is the piece that connects the agent surface back to the product. The
-server's `instructions` direct any connected agent, when composing a whole
-post, to:
+This is the piece that connects the agent surface back to the product. Steps 1
+and 3-5 are stated in the server's `instructions` as two UNCONDITIONAL RULES,
+not as stages of a workflow: ask before styling, and finish at the preview.
+Both bind on a single styled line as much as on a whole post, because an agent
+that reads them as workflow steps skips them for anything smaller. The order
+below is what a whole post looks like:
 
 1. Draft the prose, then OFFER THREE STYLING TIERS before applying anything:
    **minimal** (plain text, bold hook only), **balanced** (bold hook,
@@ -413,15 +416,19 @@ post, to:
    marks). Present them through the client's native option picker where one
    exists, else as a plain numbered list in chat. The tier is a starting
    point, not a commitment - the human restyles by hand in the card either
-   way. The real purpose is discovery: every user learns the font options
-   exist, even the one who always picks minimal.
+   way. The tiers are described in plain words and shown as rendered sample
+   lines, never as bare family names - a tier name means nothing to a user who
+   has not seen it. The real purpose is discovery: every user learns the font
+   options exist, even the one who always picks minimal.
 2. Apply the chosen tier with the tools and check `count_characters`.
 3. Save the result to a file ending `.linkedin`.
 4. Open that file in VS Code (for example `code draft.linkedin`). The
    extension activates on the language id and, with `autoOpenPreview`
    defaulting to true (S8.4), the LinkedIn card renders beside the editor
    with no further action. The agent gives the user the preview, not just
-   raw styled text.
+   raw styled text. Styled text returned into the conversation is not a
+   preview and the agent never describes it as one; it reports a preview only
+   when it actually wrote the file and opened it.
 5. If the preview does not appear, the extension is not installed. The agent
    OFFERS `code --install-extension kaushiknaru.linkedin-formatter` and lets
    the human decide. An agent never installs anything without asking.
