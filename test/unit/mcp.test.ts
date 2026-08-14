@@ -128,6 +128,26 @@ test('mcp: server instructions carry judgment, roles and the three-tier offer', 
   assert.match(SERVER_INSTRUCTIONS, /never install anything without asking/);
 });
 
+test('mcp: the ask-first and preview rules are unconditional, not workflow steps', () => {
+  // Both used to sit inside "FULL WORKFLOW when composing a whole post", which
+  // made them skippable for anything smaller than a post. They are gates now.
+  assert.match(SERVER_INSTRUCTIONS, /TWO RULES ALWAYS APPLY/);
+  assert.match(SERVER_INSTRUCTIONS, /not optional steps in a workflow/);
+
+  // Rule 1: ask, and wait, before the first conversion.
+  assert.match(SERVER_INSTRUCTIONS, /RULE 1 - ASK BEFORE YOU STYLE/);
+  assert.match(SERVER_INSTRUCTIONS, /Before the first apply_\* call/);
+  assert.match(SERVER_INSTRUCTIONS, /WAIT for an answer/);
+  // A tier name is meaningless to the user, so the offer has to be shown.
+  assert.match(SERVER_INSTRUCTIONS, /plain words instead of naming font families/);
+  assert.match(SERVER_INSTRUCTIONS, /render a sample line in each tier/);
+
+  // Rule 2: styled text in the chat is not the deliverable.
+  assert.match(SERVER_INSTRUCTIONS, /RULE 2 - FINISH AT THE PREVIEW/);
+  assert.match(SERVER_INSTRUCTIONS, /is NOT a preview/);
+  assert.match(SERVER_INSTRUCTIONS, /only if you actually wrote the file and opened it/);
+});
+
 test('mcp: list_styles covers 18 letterform styles and 2 marks', () => {
   const r = callTool('list_styles', {});
   assert.match(r.text, /Letterform styles \(18\)/);
