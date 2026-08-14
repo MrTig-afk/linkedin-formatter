@@ -1,6 +1,6 @@
 {
   "name": "linkedin-fmt",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Style LinkedIn posts with real Unicode from the command line. No network, no dependencies.",
   "license": "MIT",
   "author": "Kaushik Narumanchi",

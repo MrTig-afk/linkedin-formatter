@@ -5,7 +5,10 @@
  */
 import { run } from './run';
 
-const VERSION = '0.1.0';
+// Substituted by cli-build.js from cli/package.json. Declared, not hardcoded:
+// `--version` must report the version that was actually published.
+declare const __CLI_VERSION__: string;
+const VERSION = __CLI_VERSION__;
 
 function readStdin(): Promise<string | null> {
   // A TTY means nothing was piped in; do not block waiting for input.
