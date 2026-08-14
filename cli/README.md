@@ -21,8 +21,14 @@ W̶r̶o̶n̶g̶
 
 ## Install
 
+```bash
+npm install -g linkedin-fmt
 ```
-npx linkedin-fmt --help
+
+Or run it without installing:
+
+```bash
+npx -y linkedin-fmt --help
 ```
 
 Node 18 or newer. No dependencies, one file, nothing to configure.
@@ -105,8 +111,10 @@ check.
 ## Related
 
 - **VS Code extension** - the same core with a live LinkedIn card preview:
-  [LinkedIn Formatter](https://marketplace.visualstudio.com/items?itemName=kaushiknaru.linkedin-formatter)
-- **MCP server** - the same core as tools for AI assistants: `linkedin-formatter-mcp`
+  `code --install-extension kaushiknaru.linkedin-formatter`
+- **MCP server** - the same core as tools for AI assistants:
+  `claude mcp add -s user linkedin-formatter -- npx -y linkedin-formatter-mcp`,
+  or `npx -y linkedin-formatter-mcp` from any other client's config
 
 All three share one conversion core with no duplicated logic.
 

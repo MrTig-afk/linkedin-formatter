@@ -55,21 +55,31 @@ The full user guide (styles table, shortcuts, settings) lives on the
 
 ## Install
 
-Search **LinkedIn Formatter** in the VS Code Extensions view, or grab it
-from the [marketplace](https://marketplace.visualstudio.com/items?itemName=kaushiknaru.linkedin-formatter).
-Cursor, Windsurf and other VS Code derivatives install it from
-[Open VSX](https://open-vsx.org/extension/kaushiknaru/linkedin-formatter).
+```bash
+code --install-extension kaushiknaru.linkedin-formatter
+```
+
+Or search **LinkedIn Formatter** in the VS Code Extensions view. Cursor,
+Windsurf and other VS Code derivatives take the same id from
+[Open VSX](https://open-vsx.org/extension/kaushiknaru/linkedin-formatter),
+with `cursor` or `windsurf` in place of `code`.
+
 Then create any file ending in `.linkedin` and the preview opens by itself.
 
 ## For AI agents: the MCP server and CLI
 
-The same conversion core ships as an
-[MCP server](https://www.npmjs.com/package/linkedin-formatter-mcp) and a
-[CLI](https://www.npmjs.com/package/linkedin-fmt), so an agent can style a
-post and open the preview without ever being taught the file convention.
+The same conversion core ships as an MCP server and a CLI, so an agent can
+style a post and open the preview without ever being taught the file
+convention.
 
-Register the server once in any MCP client (Claude Code, Claude Desktop,
-Cursor, Windsurf, Codex):
+**MCP server.** Claude Code registers it in one line:
+
+```bash
+claude mcp add -s user linkedin-formatter -- npx -y linkedin-formatter-mcp
+```
+
+Claude Desktop, Cursor, Windsurf and Codex take the JSON, which fetches the
+server on demand so there is nothing to install first:
 
 ```json
 {
@@ -82,14 +92,28 @@ Cursor, Windsurf, Codex):
 }
 ```
 
-For shells and scripts:
+Restart the client afterwards. MCP servers attach at session start, so one
+registered mid-session does nothing until the client is restarted.
+
+**CLI**, for shells, scripts and any agent that is already holding a
+terminal:
+
+```bash
+npm install -g linkedin-fmt
+linkedin-fmt style "launch day" -f sans-serif -b
+```
+
+Or without installing anything, which also works the moment an MCP server is
+registered but not yet loaded:
 
 ```bash
 npx -y linkedin-fmt style "launch day" -f sans-serif -b
 ```
 
-Both are single-file bundles with zero dependencies and zero network
-access. [mcp/README.md](mcp/README.md) has the per-client setup details.
+Both are single-file bundles with zero dependencies and zero network access,
+published as [`linkedin-formatter-mcp`](https://www.npmjs.com/package/linkedin-formatter-mcp)
+and [`linkedin-fmt`](https://www.npmjs.com/package/linkedin-fmt).
+[mcp/README.md](mcp/README.md) has the per-client setup details.
 
 ## Under the hood
 

@@ -21,7 +21,13 @@ This server replaces guessing with a function call.
 
 ## Setup
 
-Add it to your client's MCP configuration:
+Claude Code, in one line:
+
+```bash
+claude mcp add -s user linkedin-formatter -- npx -y linkedin-formatter-mcp
+```
+
+Every other client takes the same thing as configuration:
 
 ```json
 {
@@ -34,18 +40,32 @@ Add it to your client's MCP configuration:
 }
 ```
 
-Per client (Node 18 or newer):
+`npx` fetches the server on demand, so there is nothing to install first. To
+pin it locally instead:
 
-- **Claude Code**: `claude mcp add -s user linkedin-formatter -- npx -y linkedin-formatter-mcp`
-- **Claude Desktop**: the JSON above in `claude_desktop_config.json`
-  (Settings → Developer → Edit Config)
-- **Cursor**: the JSON above in `~/.cursor/mcp.json`
-- **Windsurf**: the JSON above in `~/.codeium/windsurf/mcp_config.json`
+```bash
+npm install -g linkedin-formatter-mcp
+```
+
+then use `"command": "linkedin-formatter-mcp"` with no `args`.
+
+Where the configuration goes (Node 18 or newer):
+
+- **Claude Desktop**: `claude_desktop_config.json`
+  (Settings, then Developer, then Edit Config)
+- **Cursor**: `~/.cursor/mcp.json`
+- **Windsurf**: `~/.codeium/windsurf/mcp_config.json`
 - **Codex**: an `[mcp_servers.linkedin-formatter]` block with
   `command = "npx"` and `args = ["-y", "linkedin-formatter-mcp"]`
 
-Once registered, the tool descriptions reach the model automatically at session
-start, so it learns the `.linkedin` convention without being told.
+**Restart the client after registering.** MCP servers attach at session start,
+so a server added to a running session stays invisible until then. If you need
+the same conversion right now, the `linkedin-fmt` CLI is the identical core and
+needs no restart: `npx -y linkedin-fmt style "Shipped" --bold`.
+
+Once registered and reloaded, the tool descriptions reach the model
+automatically at session start, so it learns the `.linkedin` convention without
+being told.
 
 ## Tools
 
@@ -84,14 +104,19 @@ family, asserted over the full `A-Za-z0-9` range.
 
 ## Working with the extension
 
-The companion
-[VS Code extension](https://marketplace.visualstudio.com/items?itemName=kaushiknaru.linkedin-formatter)
-(also on [Open VSX](https://open-vsx.org/extension/kaushiknaru/linkedin-formatter)
-for Cursor and Windsurf)
-renders any `.linkedin` file as a live LinkedIn card beside the editor, so a
-human can see and adjust what the model produced. Because the formatting *is*
-the text, both sides edit the same file with no sync step and no markup layer
-to reconcile.
+The companion VS Code extension renders any `.linkedin` file as a live LinkedIn
+card beside the editor, so a human can see and adjust what the model produced:
+
+```bash
+code --install-extension kaushiknaru.linkedin-formatter
+```
+
+Cursor and Windsurf take the same id from
+[Open VSX](https://open-vsx.org/extension/kaushiknaru/linkedin-formatter), with
+`cursor` or `windsurf` in place of `code`.
+
+Because the formatting *is* the text, both sides edit the same file with no
+sync step and no markup layer to reconcile.
 
 A note for agents sharing a file with a human: re-read before writing. The user
 may have edited it since you last looked.
