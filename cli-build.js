@@ -9,6 +9,11 @@ const path = require('node:path');
 
 const outfile = path.join(__dirname, 'cli/dist/linkedin-fmt.js');
 
+// What `--version` prints comes from cli/package.json, never a second literal.
+// A hand-maintained copy drifts silently, and then the version a user reports
+// in a bug is not the version they are running.
+const { version } = require(path.join(__dirname, 'cli/package.json'));
+
 esbuild.build({
   entryPoints: [path.join(__dirname, 'src/cli/index.ts')],
   bundle: true,
@@ -18,6 +23,7 @@ esbuild.build({
   outfile,
   banner: { js: '#!/usr/bin/env node' },
   legalComments: 'none',
+  define: { __CLI_VERSION__: JSON.stringify(version) },
 }).then(() => {
   const { statSync } = require('node:fs');
   console.log('cli/dist/linkedin-fmt.js', (statSync(outfile).size / 1024).toFixed(1), 'KB');
