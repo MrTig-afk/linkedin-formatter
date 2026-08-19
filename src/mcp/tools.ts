@@ -130,6 +130,7 @@ const TOOL_DEFS: readonly Omit<ToolDef, 'annotations'>[] = [
         style_id: str('A style id from list_styles, e.g. "bold", "script", "monospace".'),
       },
       required: ['text', 'style_id'],
+      additionalProperties: false,
     },
   },
   {
@@ -149,6 +150,7 @@ const TOOL_DEFS: readonly Omit<ToolDef, 'annotations'>[] = [
         italic: { type: 'boolean', description: 'Apply the italic axis if the family has one.' },
       },
       required: ['text', 'family'],
+      additionalProperties: false,
     },
   },
   {
@@ -163,6 +165,7 @@ const TOOL_DEFS: readonly Omit<ToolDef, 'annotations'>[] = [
         mark_id: str('Either "strikethrough" or "underline".'),
       },
       required: ['text', 'mark_id'],
+      additionalProperties: false,
     },
   },
   {
@@ -175,6 +178,7 @@ const TOOL_DEFS: readonly Omit<ToolDef, 'annotations'>[] = [
       type: 'object',
       properties: { text: str('The styled text to convert back to plain.') },
       required: ['text'],
+      additionalProperties: false,
     },
   },
   {
@@ -195,6 +199,7 @@ const TOOL_DEFS: readonly Omit<ToolDef, 'annotations'>[] = [
         },
       },
       required: ['text'],
+      additionalProperties: false,
     },
   },
   {
