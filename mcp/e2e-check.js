@@ -120,9 +120,8 @@ function check(name, pass, detail) {
       tools.every(t => t.annotations?.readOnlyHint === true
                     && t.annotations?.destructiveHint === false
                     && t.annotations?.openWorldHint === false));
-    check('no-parameter tools set additionalProperties:false',
-      tools.filter(t => t.name.startsWith('list_'))
-           .every(t => t.inputSchema?.additionalProperties === false));
+    check('every tool sets additionalProperties:false',
+      tools.every(t => t.inputSchema?.additionalProperties === false));
     check('tool order is deterministic across calls',
       JSON.stringify((alive.result?.tools ?? []).map(t => t.name))
         === JSON.stringify(tools.map(t => t.name)));

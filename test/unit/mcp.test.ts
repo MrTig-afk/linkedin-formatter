@@ -22,6 +22,8 @@ test('mcp: every tool has a description and an object input schema', () => {
   for (const t of TOOLS) {
     assert.ok(t.description.length > 40, `${t.name} needs a real description`);
     assert.equal((t.inputSchema as { type: string }).type, 'object', `${t.name} schema`);
+    assert.equal((t.inputSchema as { additionalProperties?: boolean }).additionalProperties, false,
+      `${t.name} schema must be closed: extra arguments are a model mistake, not an option`);
   }
 });
 
