@@ -10,12 +10,32 @@ import { FAMILY_IDS } from '../../src/lib/family';
 // Tool surface
 // ---------------------------------------------------------------------------
 
-test('mcp: exposes exactly the seven tools from issue #3', () => {
+test('mcp: exposes exactly the seven tools from issue #3 plus tier_samples', () => {
   const names = TOOLS.map(t => t.name).sort();
   assert.deepEqual(names, [
     'apply_family', 'apply_mark', 'apply_style',
     'count_characters', 'list_families', 'list_styles', 'strip_formatting',
+    'tier_samples',
   ]);
+});
+
+test('mcp: tier_samples gives three labelled single lines that strip back to the hook', () => {
+  const hook = 'Shipped linkedin-formatter-mcp 0.3.0 and HANDOFF.md today.';
+  const r = callTool('tier_samples', { hook });
+  assert.equal(r.isError, false);
+  const lines = r.text.split('\n');
+  assert.equal(lines.length, 3, r.text);
+  assert.deepEqual(lines.map(l => l.split(': ')[0]), ['minimal', 'balanced', 'pizzazz']);
+  for (const line of lines) {
+    const rendered = line.slice(line.indexOf(': ') + 2);
+    assert.ok(!/[\r\n]/.test(rendered), 'a sample must be one line');
+    assert.notEqual(rendered, hook, 'a sample must actually be styled');
+    assert.equal(callTool('strip_formatting', { text: rendered }).text, hook);
+  }
+  // Samples are samples: a multi-line hook is refused, not silently flattened.
+  assert.equal(callTool('tier_samples', { hook: 'two\nlines' }).isError, true);
+  assert.equal(callTool('tier_samples', { hook: '' }).isError, true);
+  assert.equal(callTool('tier_samples', {}).isError, true);
 });
 
 test('mcp: every tool has a description and an object input schema', () => {
@@ -142,7 +162,12 @@ test('mcp: the ask-first and preview rules are unconditional, not workflow steps
   assert.match(SERVER_INSTRUCTIONS, /WAIT for an answer/);
   // A tier name is meaningless to the user, so the offer has to be shown.
   assert.match(SERVER_INSTRUCTIONS, /plain words instead of naming font families/);
-  assert.match(SERVER_INSTRUCTIONS, /render a sample line in each tier/);
+  // Finding #1 (2026-08-19): a multi-line picker preview collapses to its
+  // first line, so the samples were invisible. The server renders them and
+  // the model prints them in the message before any picker.
+  assert.match(SERVER_INSTRUCTIONS, /Call tier_samples on the hook line/);
+  assert.match(SERVER_INSTRUCTIONS, /print its three lines in your message FIRST/);
+  assert.match(SERVER_INSTRUCTIONS, /multi-line previews are collapsed by pickers and must not be used/);
 
   // Rule 2: styled text in the chat is not the deliverable.
   assert.match(SERVER_INSTRUCTIONS, /RULE 2 - FINISH AT THE PREVIEW/);

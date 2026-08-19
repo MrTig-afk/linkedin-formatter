@@ -67,7 +67,7 @@ function check(name, pass, detail) {
     // 2. Tool discovery - this is what lands in the model's context.
     const list = await send('tools/list', {});
     const tools = list.result?.tools ?? [];
-    check('tools/list returns 7 tools', tools.length === 7, `got ${tools.length}`);
+    check('tools/list returns 8 tools', tools.length === 8, `got ${tools.length}`);
     const applyFamily = tools.find(t => t.name === 'apply_family');
     check('apply_family is discoverable', !!applyFamily);
     check('its description teaches the .linkedin convention',
@@ -107,7 +107,7 @@ function check(name, pass, detail) {
       bad.result?.isError === true, JSON.stringify(bad.result?.isError));
 
     const alive = await send('tools/list', {});
-    check('server survives bad input and still serves', (alive.result?.tools ?? []).length === 7);
+    check('server survives bad input and still serves', (alive.result?.tools ?? []).length === 8);
 
     // --- spec compliance ---
     check('instructions are advertised at initialize',
@@ -132,8 +132,14 @@ function check(name, pass, detail) {
       !!unknown.error && unknown.result === undefined,
       JSON.stringify(unknown.error || unknown.result));
 
+    const tiers = await send('tools/call', { name: 'tier_samples', arguments: { hook: 'Shipped 0.3.0 today.' } });
+    const tierLines = (tiers.result?.content?.[0]?.text || '').split('\n');
+    check('tier_samples returns three single labelled lines over the wire',
+      tierLines.length === 3 && ['minimal: ', 'balanced: ', 'pizzazz: '].every((l, i) => tierLines[i].startsWith(l)),
+      JSON.stringify(tierLines));
+
     const stillAlive = await send('tools/list', {});
-    check('server survives a protocol error', (stillAlive.result?.tools ?? []).length === 7);
+    check('server survives a protocol error', (stillAlive.result?.tools ?? []).length === 8);
 
     // Version skew guard: the VERSION constant in index.ts drifts from the
     // package version silently otherwise.
