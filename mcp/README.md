@@ -78,8 +78,9 @@ being told.
 | `count_characters` | Count against the 3,000 limit, in UTF-16 units |
 | `list_families` | The 11 families and which axes each supports |
 | `list_styles` | Every letterform style and combining mark id |
+| `tier_samples` | One hook line rendered in the three tiers, one line each, to show before asking |
 
-All seven are read-only, non-destructive, closed-world pure functions, and are
+All eight are read-only, non-destructive, closed-world pure functions, and are
 annotated as such so clients need not prompt before running them.
 
 ## Guarantees

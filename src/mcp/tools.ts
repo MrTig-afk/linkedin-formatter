@@ -64,10 +64,12 @@ export const SERVER_INSTRUCTIONS =
   + 'only), balanced (bold hook, sans-serif-bold headers, sparing serif-bold '
   + 'emphasis; the sensible default), and pizzazz (a deliberate mixture: '
   + 'script flourish, monospace details, marks). Describe what each one looks '
-  + 'like in plain words instead of naming font families, and render a sample '
-  + 'line in each tier if you can - a tier name means nothing to the user '
-  + 'until they see it. Present them with your client\'s option picker if it '
-  + 'has one, else as a numbered list. Skip this only when the user has '
+  + 'like in plain words instead of naming font families. Call tier_samples '
+  + 'on the hook line and print its three lines in your message FIRST, '
+  + 'fully visible; a tier name means nothing to the user until they see it. '
+  + 'Then ask with your client\'s option picker using a label and a one-line '
+  + 'description only: multi-line previews are collapsed by pickers and must '
+  + 'not be used. No picker -> a numbered list. Skip this only when the user has '
   + 'already named a tier or given explicit styling instructions; whichever '
   + 'they pick, they can still restyle by hand in the preview afterwards. '
   + 'RULE 2 - FINISH AT THE PREVIEW, NOT AT THE TEXT. Returning styled text '
@@ -215,6 +217,21 @@ const TOOL_DEFS: readonly Omit<ToolDef, 'annotations'>[] = [
     description: 'List every letterform style id and combining mark id.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
+  {
+    name: 'tier_samples',
+    description:
+      'Render one plain hook line in the three styling tiers - minimal, '
+      + 'balanced, pizzazz - as exactly three labelled single lines, so the '
+      + 'user can see each tier before choosing (rule 1). Print the three lines '
+      + 'in your message, then ask with a one-line-per-option picker. Samples '
+      + 'only: style the post with apply_family / apply_mark after the pick.',
+    inputSchema: {
+      type: 'object',
+      properties: { hook: str('The hook line of the post, plain text, one line.') },
+      required: ['hook'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 /**
@@ -256,6 +273,39 @@ function requireString(args: Record<string, unknown>, key: string): string | nul
   return typeof v === 'string' ? v : null;
 }
 
+const familyStyle = (family: FamilyId, bold: boolean, italic: boolean) =>
+  ALL_STYLES.find(s => s.id === nearestSupported(family, bold, italic).styleIdOrPlain);
+const inFamily = (text: string, family: FamilyId, bold = false, italic = false): string => {
+  const style = familyStyle(family, bold, italic);
+  return style === undefined ? text : applyStyle(text, style);
+};
+/** A token that reads as a version, file or command: 1.2.0, HANDOFF.md, npx */
+const looksTechnical = (word: string) => /\d/.test(word) || /\w\.\w/.test(word);
+
+/**
+ * The three tiers rendered on ONE hook line, one line each, no newlines, so a
+ * client can show them before the user picks. Minimal: serif bold. Balanced:
+ * sans-serif bold. Pizzazz: sans-serif bold with the last word as a script
+ * flourish and any version/file-looking token in monospace. No marks: a
+ * strikethrough or underline would change the sentence, not just its look.
+ * Every line round-trips through strip_formatting back to the hook.
+ */
+export function tierSamples(hook: string): readonly [string, string][] {
+  const words = hook.split(' ');
+  const last = words.length - 1;
+  const pizzazz = words.map((w, i) => {
+    if (w === '') { return w; }
+    if (i === last) { return inFamily(w, 'script'); }
+    if (looksTechnical(w)) { return inFamily(w, 'monospace'); }
+    return inFamily(w, 'sans-serif', true);
+  }).join(' ');
+  return [
+    ['minimal', inFamily(hook, 'serif', true)],
+    ['balanced', inFamily(hook, 'sans-serif', true)],
+    ['pizzazz', pizzazz],
+  ];
+}
+
 /**
  * Execute a tool call. Arguments arrive from a language model, so every field
  * is checked rather than trusted; a wrong type comes back as a tool error the
@@ -285,6 +335,18 @@ export function callTool(name: string, rawArgs: unknown): ToolResult {
       + `\n\nCombining marks (${COMBINING_MARKS.length}):\n`
       + COMBINING_MARKS.map(m => `  ${m.id} - ${m.label}`).join('\n'),
     );
+  }
+
+  if (name === 'tier_samples') {
+    const hook = requireString(args, 'hook');
+    if (hook === null) { return fail('hook is required and must be a string'); }
+    if (hook.trim() === '' || /[\r\n]/.test(hook)) {
+      return fail('hook must be one non-empty line with no newlines');
+    }
+    if (hook.length > MAX_TOOL_TEXT_LENGTH) {
+      return fail('hook exceeds ' + MAX_TOOL_TEXT_LENGTH + ' UTF-16 units');
+    }
+    return ok(tierSamples(hook).map(([tier, line]) => `${tier}: ${line}`).join('\n'));
   }
 
   const text = requireString(args, 'text');
