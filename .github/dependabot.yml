@@ -7,6 +7,9 @@ updates:
       # typescript-eslint peers typescript <6.1.0; lift when it supports newer
       - dependency-name: "typescript"
         versions: [">=6.1.0"]
+      # vsce refuses @types/vscode newer than engines.vscode; raise both together
+      - dependency-name: "@types/vscode"
+        versions: [">=1.97.0"]
     groups:
       npm-minor-patch:
         update-types: ["minor", "patch"]
