@@ -10,6 +10,9 @@ updates:
       # vsce refuses @types/vscode newer than engines.vscode; raise both together
       - dependency-name: "@types/vscode"
         versions: [">=1.97.0"]
+      # runtime floor is Node 18 (cli/mcp engines) and VS Code 1.96's Node 20
+      - dependency-name: "@types/node"
+        versions: [">=23.0.0"]
     groups:
       npm-minor-patch:
         update-types: ["minor", "patch"]
