@@ -37,3 +37,6 @@ src/cli/**
 mcp/**
 mcp-build.js
 src/mcp/**
+
+# local code-review-graph index, never in the package
+.code-review-graph/**
