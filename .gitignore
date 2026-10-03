@@ -46,3 +46,5 @@ cli/dist/
 mcp/dist/
 .code-review-graph/
 .mcp.json
+# PRD is private planning material
+docs/linkedin-formatter-prd.md
