@@ -198,7 +198,7 @@
     "test:mcp": "node mcp-build.js && node mcp/e2e-check.js"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.0.0",
     "@types/vscode": "~1.96.0",
